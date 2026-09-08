@@ -52,8 +52,9 @@
       </button>
       <div class="port-group">
         <select id="portSelect" class="select-input" title="Select Local COM Port">
-          <option value="COM9">COM9 (Creality Falcon)</option>
+          <option value="AUTO">🔍 Auto-Detect Laser Port</option>
         </select>
+        <button id="btnAutoDetectPort" class="btn-small" style="height:32px; font-size:11px; padding:0 8px;" title="Automatically identify and connect to laser port">Auto-Detect</button>
         <button id="btnRefreshPorts" class="btn-icon" title="Refresh Local COM Ports">↻</button>
       </div>
       <button id="btnConnect" class="btn btn-connect" title="Connect via local Python server">Local Bridge</button>
@@ -460,6 +461,13 @@
           <div class="form-field">
             <label for="inputHeight">Height (mm)</label>
             <input type="number" id="inputHeight" value="40.0" step="1.0" class="num-input">
+          </div>
+          <div class="form-field">
+            <label for="inputRotation">Rotation Angle (°)</label>
+            <div style="display:flex; gap:4px; align-items:center;">
+              <input type="number" id="inputRotation" value="0.0" step="1.0" min="0" max="360" class="num-input" style="flex:1;">
+              <button id="btnResetRotation" class="btn-small" style="padding:4px 8px; font-size:11px;" title="Reset rotation to 0°">0°</button>
+            </div>
           </div>
         </div>
         <div class="form-actions-row">

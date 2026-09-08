@@ -149,17 +149,34 @@ class ClientSvgCompiler {
 
   static generateVectorGcode({
     norm_paths,
+    center_x,
+    center_y,
     x_pos,
     y_pos,
     width_mm,
     height_mm,
+    rotation_deg = 0,
     speed_mm_min = 900,
     power_s = 280,
     passes = 1
   }) {
+    const cx = (center_x !== undefined) ? center_x : (x_pos + width_mm / 2);
+    const cy = (center_y !== undefined) ? center_y : (y_pos + height_mm / 2);
+    const rad = (-rotation_deg * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+
+    const transformPoint = (nx, ny) => {
+      const lx = (nx - 0.5) * width_mm;
+      const ly = (0.5 - ny) * height_mm;
+      const rx = lx * cos - ly * sin;
+      const ry = lx * sin + ly * cos;
+      return [cx + rx, cy + ry];
+    };
+
     const lines = [
       "; --- FALCON LASER STUDIO VECTOR TRACE TOOLPATH ---",
-      `; Position: (${x_pos}, ${y_pos}) | Size: ${width_mm} x ${height_mm} mm`,
+      `; Center: (${cx.toFixed(1)}, ${cy.toFixed(1)}) | Size: ${width_mm} x ${height_mm} mm | Rotation: ${rotation_deg.toFixed(1)}°`,
       `; Speed: ${speed_mm_min} mm/min | Power: S${power_s} | Passes: ${passes}`,
       "G90 G21",
       "M4 S0",
@@ -170,16 +187,11 @@ class ClientSvgCompiler {
       if (passes > 1) lines.push(`; --- PASS ${pass}/${passes} ---`);
       for (const poly of norm_paths) {
         if (!poly || poly.length < 2) continue;
-        const [nx0, ny0] = poly[0];
-        // Note: in laser coords, SVG y is inverted (0 at top)
-        const gx0 = x_pos + nx0 * width_mm;
-        const gy0 = y_pos + (1.0 - ny0) * height_mm;
+        const [gx0, gy0] = transformPoint(poly[0][0], poly[0][1]);
 
         lines.push(`G0 X${gx0.toFixed(3)} Y${gy0.toFixed(3)}`);
         for (let j = 1; j < poly.length; j++) {
-          const [nx, ny] = poly[j];
-          const gx = x_pos + nx * width_mm;
-          const gy = y_pos + (1.0 - ny) * height_mm;
+          const [gx, gy] = transformPoint(poly[j][0], poly[j][1]);
           lines.push(`G1 X${gx.toFixed(3)} Y${gy.toFixed(3)} F${speed_mm_min.toFixed(0)} S${power_s}`);
         }
         lines.push("M5");

@@ -45,21 +45,57 @@ class GrblController:
         self.running = False
 
     @staticmethod
-    def list_ports() -> List[Dict[str, str]]:
+    def list_ports() -> List[Dict[str, any]]:
         ports = []
+        laser_keywords = ["ch340", "ch341", "cp210", "ftdi", "usb-serial", "usb serial", "creality", "falcon", "cdc", "acm", "silicon labs", "wch"]
         for p in serial.tools.list_ports.comports():
+            desc = p.description or ""
+            hwid = p.hwid or ""
+            is_laser = any(k in desc.lower() or k in hwid.lower() for k in laser_keywords)
             ports.append({
                 "port": p.device,
-                "description": p.description,
-                "hwid": p.hwid
+                "description": desc,
+                "hwid": hwid,
+                "is_laser": is_laser
             })
         return ports
+
+    def auto_detect_laser_port(self) -> Optional[str]:
+        """Scan open COM ports and identify the Creality Falcon / GRBL controller."""
+        all_ports = self.list_ports()
+        # 1. Prioritize ports with known laser engraver USB chipsets
+        for p in all_ports:
+            if p["is_laser"]:
+                return p["port"]
+        
+        # 2. If not tagged, probe candidate COM ports at 115200 baud
+        for p in all_ports:
+            port_name = p["port"]
+            try:
+                test_ser = serial.Serial(port_name, self.baudrate, timeout=0.3, write_timeout=0.3)
+                test_ser.write(b"\r\n$$\r\n")
+                time.sleep(0.3)
+                resp = test_ser.read(256).decode("utf-8", errors="ignore")
+                test_ser.close()
+                if "Grbl" in resp or "$" in resp or "ok" in resp:
+                    return port_name
+            except Exception:
+                continue
+                
+        # 3. Fallback to first available COM port if any exist
+        return all_ports[0]["port"] if all_ports else None
 
     def connect(self, port: Optional[str] = None) -> bool:
         with self.lock:
             if self.is_connected:
                 return True
             target_port = port or self.port_name
+            if target_port == "AUTO" or not target_port:
+                detected = self.auto_detect_laser_port()
+                if detected:
+                    target_port = detected
+                else:
+                    return False
             try:
                 self.ser = serial.Serial()
                 self.ser.port = target_port

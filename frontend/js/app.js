@@ -19,21 +19,29 @@ class FalconApp {
     this.selectedBedMaterial = 'glass';
     this.jogStep = 1.0;
     
-    // Wire global callbacks for canvas drag & resize
+    // Wire global callbacks for canvas drag, resize, and rotation
     window.onWorkpieceMoved = (x, y) => {
-      document.getElementById('inputX').value = x;
-      document.getElementById('inputY').value = y;
+      const elX = document.getElementById('inputX');
+      const elY = document.getElementById('inputY');
+      if (elX) elX.value = x.toFixed(1);
+      if (elY) elY.value = y.toFixed(1);
     };
     window.onWorkpieceResized = (w, h) => {
-      document.getElementById('inputWidth').value = w;
-      document.getElementById('inputHeight').value = h;
+      const elW = document.getElementById('inputWidth');
+      const elH = document.getElementById('inputHeight');
+      if (elW) elW.value = w.toFixed(1);
+      if (elH) elH.value = h.toFixed(1);
+    };
+    window.onWorkpieceRotated = (deg) => {
+      const elR = document.getElementById('inputRotation');
+      if (elR) elR.value = deg.toFixed(1);
     };
     window.isAspectLocked = () => {
       const el = document.getElementById('checkLockAspect');
       return el ? el.checked : true;
     };
     window.getWorkpieceAspectRatio = () => {
-      return this.aspectRatio || (parseFloat(document.getElementById('inputWidth').value) / parseFloat(document.getElementById('inputHeight').value));
+      return this.aspectRatio || (parseFloat(document.getElementById('inputWidth').value) / parseFloat(document.getElementById('inputHeight').value)) || 1.0;
     };
 
     this.initElements();
@@ -45,6 +53,7 @@ class FalconApp {
   initElements() {
     this.btnWebSerial = document.getElementById('btnWebSerial');
     this.portSelect = document.getElementById('portSelect');
+    this.btnAutoDetectPort = document.getElementById('btnAutoDetectPort');
     this.btnRefreshPorts = document.getElementById('btnRefreshPorts');
     this.btnConnect = document.getElementById('btnConnect');
     this.btnEmergencyStop = document.getElementById('btnEmergencyStop');
@@ -131,6 +140,8 @@ class FalconApp {
     this.inputY = document.getElementById('inputY');
     this.inputWidth = document.getElementById('inputWidth');
     this.inputHeight = document.getElementById('inputHeight');
+    this.inputRotation = document.getElementById('inputRotation');
+    this.btnResetRotation = document.getElementById('btnResetRotation');
     this.checkLockAspect = document.getElementById('checkLockAspect');
     this.btnCenterBed = document.getElementById('btnCenterBed');
     this.btnBatch2x2 = document.getElementById('btnBatch2x2');
@@ -235,10 +246,11 @@ class FalconApp {
     // Workpiece transform inputs
     const onTransformChange = () => {
       const x = parseFloat(this.inputX.value) || 200;
-      const y = parseFloat(this.inputY.value) || 200;
+      const y = parseFloat(this.inputY.value) || 207.5;
       const w = parseFloat(this.inputWidth.value) || 40;
       const h = parseFloat(this.inputHeight.value) || 40;
-      this.visualizer.setWorkpiece(x, y, w, h);
+      const rot = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0;
+      this.visualizer.setWorkpiece(x, y, w, h, rot, this.visualizer.workpiece.visible);
     };
 
     this.inputX.addEventListener('input', onTransformChange);
@@ -255,6 +267,25 @@ class FalconApp {
       }
       onTransformChange();
     });
+
+    if (this.inputRotation) {
+      this.inputRotation.addEventListener('input', () => {
+        const deg = parseFloat(this.inputRotation.value) || 0;
+        this.visualizer.setRotation(deg);
+      });
+    }
+
+    if (this.btnResetRotation) {
+      this.btnResetRotation.addEventListener('click', () => {
+        if (this.inputRotation) this.inputRotation.value = "0.0";
+        this.visualizer.setRotation(0);
+        this.log('Workpiece rotation reset to 0°.');
+      });
+    }
+
+    if (this.btnAutoDetectPort) {
+      this.btnAutoDetectPort.addEventListener('click', () => this.autoDetectLaserPort());
+    }
 
     this.btnCenterBed.addEventListener('click', () => {
       this.inputX.value = "200.0";
@@ -363,61 +394,6 @@ class FalconApp {
     }
   }
 
-  async generateBedScale(burnDirect = false) {
-    const selectedSizeRadio = document.querySelector('input[name="scaleSize"]:checked');
-    const size_mm = parseFloat(selectedSizeRadio ? selectedSizeRadio.value : 380);
-
-    const payload = {
-      material: this.selectedBedMaterial || 'glass',
-      size_mm: size_mm,
-      center_x: 200.0,
-      center_y: 207.5,
-      include_40mm: this.checkScale40mm.checked,
-      include_100mm: this.checkScale100mm.checked,
-      include_rulers: this.checkScaleRulers.checked,
-      include_grid: this.checkScaleGrid.checked
-    };
-
-    this.log(`Generating Bed Reference Scale for ${payload.material.toUpperCase()} (${size_mm}×${size_mm} mm)...`);
-    try {
-      const res = await fetch('/api/generate_bed_scale', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (data.success) {
-        this.inputX.value = "200.0";
-        this.inputY.value = "207.5";
-        this.inputWidth.value = String(size_mm);
-        this.inputHeight.value = String(size_mm);
-        this.inputSpeed.value = String(data.speed);
-        this.inputPower.value = String(data.power);
-
-        this.visualizer.setWorkpiece(200.0, 207.5, size_mm, size_mm);
-        this.visualizer.setToolpaths(data.norm_paths);
-        this.currentPaths = data.norm_paths;
-
-        this.switchTab('bedMap');
-        this.log(`Bed Scale generated: ${data.line_count} G-code lines for ${data.material_name}! ${data.safety_note}`);
-        this.jobLinesText.textContent = `Line: 0 / ${data.line_count}`;
-
-        if (burnDirect) {
-          if (payload.material === 'glass') {
-            if (!confirm(`SAFETY CHECK FOR GLASS:\n\n${data.safety_note}\n\nHave you covered the black glass with paper masking tape or matte black paint?`)) {
-              return;
-            }
-          }
-          this.startJob();
-        }
-      } else {
-        alert(data.error || 'Failed to generate bed scale.');
-      }
-    } catch (e) {
-      this.log(`Error generating bed scale: ${e.message}`);
-    }
-  }
-
   initWebSocket() {
     // Only connect WebSocket if running on local Python server
     if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
@@ -501,45 +477,146 @@ class FalconApp {
   }
 
   async refreshPorts() {
-    try {
-      const res = await fetch('/api/ports');
-      const data = await res.json();
-      this.portSelect.innerHTML = '';
-      if (data.ports && data.ports.length > 0) {
-        data.ports.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = p.port;
-          opt.textContent = `${p.port} (${p.description})`;
-          this.portSelect.appendChild(opt);
-        });
-      } else {
+    this.portSelect.innerHTML = '';
+
+    // Auto-detect option
+    const autoOpt = document.createElement('option');
+    autoOpt.value = 'AUTO';
+    autoOpt.textContent = '🔍 Auto-Detect Laser Port';
+    this.portSelect.appendChild(autoOpt);
+
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    let autoSelected = false;
+
+    if (isLocalhost) {
+      try {
+        const res = await fetch('/api/ports');
+        if (res.ok) {
+          const ct = res.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+            const data = await res.json();
+            if (data.ports && data.ports.length > 0) {
+              data.ports.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.port;
+                const star = p.is_laser ? ' ★ (Falcon Laser)' : '';
+                opt.textContent = `${p.port} (${p.description})${star}`;
+                if (p.is_laser && !autoSelected) {
+                  opt.selected = true;
+                  autoSelected = true;
+                }
+                this.portSelect.appendChild(opt);
+              });
+            }
+          }
+        }
+      } catch (e) {
+        // Local bridge not running
+      }
+    }
+
+    // Always list common COM ports for quick selection (COM1 to COM12)
+    const commonPorts = ['COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'COM10', 'COM11', 'COM12'];
+    const existing = new Set(Array.from(this.portSelect.options).map(o => o.value));
+    commonPorts.forEach(cp => {
+      if (!existing.has(cp)) {
         const opt = document.createElement('option');
-        opt.value = 'COM9';
-        opt.textContent = 'COM9 (Creality Falcon)';
+        opt.value = cp;
+        opt.textContent = `${cp} (Serial Port)`;
         this.portSelect.appendChild(opt);
       }
-    } catch (e) {
-      console.error(e);
+    });
+
+    // Web Serial Option
+    if ('serial' in navigator) {
+      const webSerialOpt = document.createElement('option');
+      webSerialOpt.value = 'WEB_SERIAL';
+      webSerialOpt.textContent = '⚡ Web Serial USB (Direct Browser)';
+      this.portSelect.appendChild(webSerialOpt);
+
+      if (!isLocalhost && !autoSelected) {
+        this.portSelect.value = 'AUTO';
+      }
+    }
+  }
+
+  async autoDetectLaserPort() {
+    this.log('Scanning open ports to auto-identify Creality Falcon laser...');
+
+    // 1. If running in browser with Web Serial support and not localhost
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocalhost && 'serial' in navigator) {
+      try {
+        await this.toggleWebSerial();
+        return;
+      } catch (err) {
+        this.log(`Web Serial: ${err.message}`);
+      }
+    }
+
+    // 2. If running locally with Python server
+    try {
+      this.log('Probing COM ports via local controller bridge...');
+      const res = await fetch('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: 'AUTO' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        const portName = data.connected_port || 'USB';
+        this.log(`Successfully auto-identified and connected to Falcon on ${portName}!`);
+        this.btnConnect.textContent = 'Disconnect';
+        this.btnConnect.classList.add('btn-active');
+        this.statusBadge.className = 'status-badge active';
+        this.statusText.textContent = 'CONNECTED';
+        if (data.connected_port) {
+          this.portSelect.value = data.connected_port;
+        }
+        return;
+      }
+    } catch (e) {}
+
+    // 3. Fallback to Web Serial prompt
+    if ('serial' in navigator) {
+      this.log('Attempting Web Serial USB connection directly in browser...');
+      await this.toggleWebSerial();
+    } else {
+      this.log('Could not auto-detect laser. Please select your COM port or click USB Connect.');
     }
   }
 
   async toggleConnect() {
-    const port = this.portSelect.value || 'COM9';
-    if (this.btnConnect.textContent === 'Connect') {
+    const port = this.portSelect.value || 'AUTO';
+    if (this.btnConnect.textContent === 'Connect' || this.btnConnect.textContent === 'Local Bridge') {
       this.log(`Connecting to ${port}...`);
-      const res = await fetch('/api/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ port })
-      });
-      const data = await res.json();
-      if (data.success) {
-        this.log(`Successfully connected to ${port}!`);
-      } else {
-        this.log(`Failed to connect to ${port}. Make sure 24V power and USB cable are plugged in.`);
+      try {
+        const res = await fetch('/api/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ port })
+        });
+        const data = await res.json();
+        if (data.success) {
+          this.log(`Successfully connected to ${data.connected_port || port}!`);
+          this.btnConnect.textContent = 'Disconnect';
+          this.btnConnect.classList.add('btn-active');
+          this.statusBadge.className = 'status-badge active';
+          this.statusText.textContent = 'CONNECTED';
+        } else {
+          this.log(`Failed to connect to ${port}. Make sure 24V power and USB cable are plugged in.`);
+        }
+      } catch (e) {
+        this.log(`Connection error: ${e.message}. If using standalone web app, click '⚡ USB Connect'.`);
       }
     } else {
-      await fetch('/api/disconnect', { method: 'POST' });
+      try {
+        await fetch('/api/disconnect', { method: 'POST' });
+      } catch (e) {}
+      this.btnConnect.textContent = 'Local Bridge';
+      this.btnConnect.classList.remove('btn-active');
+      this.statusBadge.className = 'status-badge disconnected';
+      this.statusText.textContent = 'DISCONNECTED';
       this.log('Disconnected from Falcon.');
     }
   }
@@ -636,19 +713,24 @@ class FalconApp {
       };
 
       let data = null;
-      try {
-        const res = await fetch('/api/generate_bed_scale', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (res.ok) data = await res.json();
-      } catch (e) {
-        // Standalone / GitHub Pages
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isLocalhost) {
+        try {
+          const res = await fetch('/api/generate_bed_scale', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) data = await res.json();
+        } catch (e) {
+          // Local bridge error
+        }
       }
 
       if (!data || !data.success) {
-        data = ClientBedScaleGenerator.generateGridGcode(payload);
+        if (typeof ClientBedScaleGenerator !== 'undefined') {
+          data = ClientBedScaleGenerator.generateGridGcode(payload);
+        }
       }
 
       if (data && data.success) {
@@ -658,6 +740,7 @@ class FalconApp {
         this.inputHeight.value = String(data.size_mm);
         this.inputX.value = (data.size_mm / 2.0).toFixed(1);
         this.inputY.value = (data.size_mm / 2.0).toFixed(1);
+        if (this.inputRotation) this.inputRotation.value = "0.0";
         this.inputSpeed.value = String(data.speed);
         this.inputPower.value = String(data.power);
 
@@ -665,7 +748,9 @@ class FalconApp {
           data.size_mm / 2.0,
           data.size_mm / 2.0,
           data.size_mm,
-          data.size_mm
+          data.size_mm,
+          0.0,
+          true
         );
         this.visualizer.setToolpaths(data.norm_paths);
         this.jobLinesText.textContent = `Line: 0 / ${data.line_count}`;
@@ -769,7 +854,8 @@ class FalconApp {
     this.placeholderProcessed.classList.remove('hidden');
     this.pathCountTag.classList.add('hidden');
     this.visualizer.setToolpaths([]);
-    this.log('File cleared.');
+    this.visualizer.setVisible(false);
+    this.log('File cleared. Workpiece boundary removed from bed.');
   }
 
   async parseSvg(xml) {
@@ -798,14 +884,17 @@ class FalconApp {
         // Adjust height to match aspect
         const w = parseFloat(this.inputWidth.value) || 40;
         this.inputHeight.value = (w / this.aspectRatio).toFixed(1);
+        const rot = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0;
         
         this.visualizer.setWorkpiece(
           parseFloat(this.inputX.value),
           parseFloat(this.inputY.value),
           w,
-          parseFloat(this.inputHeight.value)
+          parseFloat(this.inputHeight.value),
+          rot,
+          true
         );
-        this.visualizer.setToolpaths(this.currentPaths);
+        this.visualizer.setToolpaths(this.currentPaths, true);
         this.switchTab('bedMap');
         this.log(`SVG loaded: ${data.path_count} vector paths extracted!`);
       }
@@ -887,47 +976,114 @@ class FalconApp {
     }
   }
 
+  parseGcodeToolpaths(lines) {
+    const rawPolys = [];
+    let cur = [];
+    let curX = 0, curY = 0;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i].trim();
+      if (!l || l.startsWith(';')) continue;
+      const xMatch = l.match(/X([0-9.-]+)/i);
+      const yMatch = l.match(/Y([0-9.-]+)/i);
+      if (xMatch) curX = parseFloat(xMatch[1]);
+      if (yMatch) curY = parseFloat(yMatch[1]);
+
+      if (l.startsWith('G0')) {
+        if (cur.length > 1) rawPolys.push(cur);
+        cur = [[curX, curY]];
+      } else if (l.startsWith('G1')) {
+        if (cur.length === 0) cur.push([curX, curY]);
+        cur.push([curX, curY]);
+        minX = Math.min(minX, curX);
+        maxX = Math.max(maxX, curX);
+        minY = Math.min(minY, curY);
+        maxY = Math.max(maxY, curY);
+      }
+    }
+    if (cur.length > 1) rawPolys.push(cur);
+    if (rawPolys.length === 0 || !isFinite(minX)) return [];
+
+    const spanX = Math.max(1, maxX - minX);
+    const spanY = Math.max(1, maxY - minY);
+    const normPaths = [];
+    for (const poly of rawPolys) {
+      normPaths.push(poly.map(pt => [
+        (pt[0] - minX) / spanX,
+        1.0 - (pt[1] - minY) / spanY
+      ]));
+    }
+    return normPaths;
+  }
+
   async loadPreset(presetId) {
     this.currentPresetId = presetId;
     this.log(`Loading preset: ${presetId}...`);
-    
-    // Call backend to load pre-tuned G-code directly
-    const res = await fetch('/api/load_preset_gcode', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: presetId })
-    });
-    const data = await res.json();
-    
-    if (data.success) {
-      if (presetId === 'chittur_4cm') {
-        this.inputWidth.value = '35.0';
-        this.inputHeight.value = '35.0';
-        this.inputSpeed.value = '900';
-        this.inputPower.value = '280';
-      } else if (presetId === 'chittur_10cm') {
-        this.inputWidth.value = '90.0';
-        this.inputHeight.value = '90.0';
-        this.inputSpeed.value = '1000';
-        this.inputPower.value = '320';
-      } else if (presetId === 'bed_scale_200mm') {
-        this.inputWidth.value = '200.0';
-        this.inputHeight.value = '200.0';
-        this.inputSpeed.value = '800';
-        this.inputPower.value = '450';
-      }
-      
-      this.visualizer.setWorkpiece(
-        parseFloat(this.inputX.value),
-        parseFloat(this.inputY.value),
-        parseFloat(this.inputWidth.value),
-        parseFloat(this.inputHeight.value)
-      );
-      this.switchTab('bedMap');
-      this.log(`Preset ready: ${data.line_count} G-code lines loaded! Click 'START ENGRAVE' to run.`);
-    } else {
-      this.log(`Error loading preset: ${data.error}`);
+
+    const presetMeta = {
+      'chittur_4cm': { file: 'presets/keychain_4cm_vector.gcode', w: 35.0, h: 35.0, speed: 900, power: 280 },
+      'chittur_10cm': { file: 'presets/keychain_10cm_vector.gcode', w: 90.0, h: 90.0, speed: 1000, power: 320 },
+      'bed_scale_200mm': { file: 'presets/black_glass_bed_scale.gcode', w: 200.0, h: 200.0, speed: 800, power: 450 }
+    };
+    const info = presetMeta[presetId] || { file: 'presets/keychain_4cm_vector.gcode', w: 35.0, h: 35.0, speed: 900, power: 280 };
+
+    this.inputWidth.value = String(info.w);
+    this.inputHeight.value = String(info.h);
+    this.inputSpeed.value = String(info.speed);
+    this.inputPower.value = String(info.power);
+    if (this.inputRotation) this.inputRotation.value = "0.0";
+
+    let loadedLines = null;
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+    if (isLocalhost) {
+      try {
+        const res = await fetch('/api/load_preset_gcode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: presetId })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            this.log(`Preset loaded on local bridge (${data.line_count} lines).`);
+          }
+        }
+      } catch (e) {}
     }
+
+    try {
+      const gRes = await fetch(info.file);
+      if (gRes.ok) {
+        const text = await gRes.text();
+        loadedLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      }
+    } catch (e) {}
+
+    if (loadedLines && loadedLines.length > 0) {
+      this.currentActiveGcode = loadedLines;
+      this.jobLinesText.textContent = `Line: 0 / ${loadedLines.length}`;
+      this.btnStartJob.disabled = false;
+      const paths = this.parseGcodeToolpaths(loadedLines);
+      if (paths && paths.length > 0) {
+        this.currentPaths = paths;
+        this.visualizer.setToolpaths(paths, true);
+      }
+      this.log(`Preset ${presetId} ready: ${loadedLines.length} G-code lines loaded!`);
+    } else {
+      this.log(`Preset ${presetId} parameters set.`);
+    }
+
+    this.visualizer.setWorkpiece(
+      parseFloat(this.inputX.value),
+      parseFloat(this.inputY.value),
+      info.w,
+      info.h,
+      0.0,
+      true
+    );
+    this.switchTab('bedMap');
   }
 
   async generateGcode() {
@@ -975,12 +1131,16 @@ class FalconApp {
 
       if (!data || !data.success) {
         if (this.currentMode === 'vector') {
+          const rotDeg = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0;
           const lines = ClientSvgCompiler.generateVectorGcode({
             norm_paths: this.currentPaths,
+            center_x: parseFloat(this.inputX.value),
+            center_y: parseFloat(this.inputY.value),
             x_pos: payload.x,
             y_pos: payload.y,
             width_mm: payload.width,
             height_mm: payload.height,
+            rotation_deg: rotDeg,
             speed_mm_min: payload.speed,
             power_s: payload.power,
             passes: payload.passes
@@ -1127,71 +1287,19 @@ class FalconApp {
   }
 
   rotateCW() {
-    if (this.currentPaths && this.currentPaths.length > 0) {
-      for (const poly of this.currentPaths) {
-        for (const pt of poly) {
-          const ox = pt[0], oy = pt[1];
-          pt[0] = Math.round(oy * 10000) / 10000;
-          pt[1] = Math.round((1.0 - ox) * 10000) / 10000;
-        }
-      }
-      this.visualizer.setToolpaths(this.currentPaths);
-    }
-    const oldW = parseFloat(this.inputWidth.value);
-    const oldH = parseFloat(this.inputHeight.value);
-    this.inputWidth.value = String(oldH);
-    this.inputHeight.value = String(oldW);
-    this.aspectRatio = 1.0 / (this.aspectRatio || 1.0);
-    this.visualizer.setWorkpiece(
-      parseFloat(this.inputX.value),
-      parseFloat(this.inputY.value),
-      oldH,
-      oldW
-    );
-    if (this.fileBase64) {
-      this.transformImage((canvas, ctx, img) => {
-        canvas.width = img.height;
-        canvas.height = img.width;
-        ctx.translate(img.height, 0);
-        ctx.rotate(Math.PI / 2);
-        ctx.drawImage(img, 0, 0);
-      });
-    }
-    this.log('Workpiece rotated 90° Clockwise.');
+    let cur = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : this.visualizer.workpiece.rotation;
+    cur = ((cur + 90) % 360 + 360) % 360;
+    if (this.inputRotation) this.inputRotation.value = cur.toFixed(1);
+    this.visualizer.setRotation(cur);
+    this.log(`Workpiece rotated to ${cur.toFixed(1)}° (+90° CW).`);
   }
 
   rotateCCW() {
-    if (this.currentPaths && this.currentPaths.length > 0) {
-      for (const poly of this.currentPaths) {
-        for (const pt of poly) {
-          const ox = pt[0], oy = pt[1];
-          pt[0] = Math.round((1.0 - oy) * 10000) / 10000;
-          pt[1] = Math.round(ox * 10000) / 10000;
-        }
-      }
-      this.visualizer.setToolpaths(this.currentPaths);
-    }
-    const oldW = parseFloat(this.inputWidth.value);
-    const oldH = parseFloat(this.inputHeight.value);
-    this.inputWidth.value = String(oldH);
-    this.inputHeight.value = String(oldW);
-    this.aspectRatio = 1.0 / (this.aspectRatio || 1.0);
-    this.visualizer.setWorkpiece(
-      parseFloat(this.inputX.value),
-      parseFloat(this.inputY.value),
-      oldH,
-      oldW
-    );
-    if (this.fileBase64) {
-      this.transformImage((canvas, ctx, img) => {
-        canvas.width = img.height;
-        canvas.height = img.width;
-        ctx.translate(0, img.width);
-        ctx.rotate(-Math.PI / 2);
-        ctx.drawImage(img, 0, 0);
-      });
-    }
-    this.log('Workpiece rotated 90° Counter-Clockwise.');
+    let cur = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : this.visualizer.workpiece.rotation;
+    cur = ((cur - 90) % 360 + 360) % 360;
+    if (this.inputRotation) this.inputRotation.value = cur.toFixed(1);
+    this.visualizer.setRotation(cur);
+    this.log(`Workpiece rotated to ${cur.toFixed(1)}° (-90° CCW).`);
   }
 
   log(msg) {

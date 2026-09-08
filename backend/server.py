@@ -47,9 +47,13 @@ async def api_get_ports(request):
 
 async def api_connect(request):
     data = await request.json()
-    port = data.get("port", "COM9")
+    port = data.get("port", "AUTO")
     success = controller.connect(port)
-    return JSONResponse({"success": success, "status": controller.get_status_dict()})
+    return JSONResponse({
+        "success": success, 
+        "status": controller.get_status_dict(),
+        "connected_port": controller.port_name
+    })
 
 async def api_disconnect(request):
     controller.disconnect()

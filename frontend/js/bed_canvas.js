@@ -2,6 +2,13 @@
  * Interactive 2D Bed Visualizer for Falcon Laser Studio.
  * Renders the 400x415 mm work area, the 72x72 cm glass platform base,
  * coordinate grids, draggable workpiece placement, toolpaths, and real-time laser head position.
+ * 
+ * Features:
+ * - Workpiece boundary visible ONLY after loading a file or preset.
+ * - Corner Rotate Handles with curved circular arrow icons for rotating with mouse movement to custom angles.
+ * - Corner Resize Handles for custom sizing with aspect lock support.
+ * - Real-time floating HUD badges for dimensions, angle, and position.
+ * - Physical (0,0) Machine Origin Datum Marker.
  */
 
 class BedVisualizer {
@@ -12,7 +19,7 @@ class BedVisualizer {
     // Machine physical dimensions (mm)
     this.bedWidth = 400.0;
     this.bedHeight = 415.0;
-    this.glassWidth = 720.0; // 72 cm
+    this.glassWidth = 720.0; // 72 cm black glass base
     this.glassHeight = 720.0;
     
     // View transform (pan & zoom)
@@ -20,15 +27,22 @@ class BedVisualizer {
     this.panX = 60.0;
     this.panY = 60.0;
     
-    // Workpiece
+    // Workpiece State
     this.workpiece = {
-      x: 190.0,
-      y: 190.0,
+      x: 200.0,
+      y: 207.5,
       width: 40.0,
       height: 40.0,
+      rotation: 0.0, // in degrees 0-360
+      visible: false, // ONLY visible after loading an SVG/Image/Preset
       isDragging: false,
+      isResizing: false,
+      isRotating: false,
+      activeCorner: null,
       dragOffsetX: 0,
-      dragOffsetY: 0
+      dragOffsetY: 0,
+      rotateStartAngle: 0,
+      rotateStartDeg: 0
     };
     
     // Current toolpaths [[(nx, ny), ...]] normalized 0-1
@@ -38,10 +52,12 @@ class BedVisualizer {
     // Machine live position
     this.laserPos = { x: 0.0, y: 0.0 };
     
-    // Mouse state
+    // Mouse interaction state
     this.isPanning = false;
     this.lastMouseX = 0;
     this.lastMouseY = 0;
+    this.currentMouseX = 0;
+    this.currentMouseY = 0;
     
     this.initEvents();
     this.resizeCanvas();
@@ -53,6 +69,7 @@ class BedVisualizer {
 
   resizeCanvas() {
     const container = this.canvas.parentElement;
+    if (!container) return;
     this.canvas.width = container.clientWidth;
     this.canvas.height = container.clientHeight;
     this.fitToScreen();
@@ -66,49 +83,62 @@ class BedVisualizer {
     const scaleY = availH / this.bedHeight;
     this.scale = Math.min(scaleX, scaleY);
     
-    // Center bed
+    // Center bed in viewport
     this.panX = (this.canvas.width - this.bedWidth * this.scale) / 2;
     this.panY = this.canvas.height - (this.canvas.height - this.bedHeight * this.scale) / 2;
     this.render();
   }
 
-  // Coordinate transforms (Machine mm -> Canvas pixels, and vice versa)
+  // Machine mm -> Canvas pixels
   mmToCanvas(x, y) {
-    // Machine origin (0,0) is bottom-left
     const cx = this.panX + x * this.scale;
     const cy = this.panY - y * this.scale;
     return { x: cx, y: cy };
   }
 
+  // Canvas pixels -> Machine mm
   canvasToMm(cx, cy) {
     const x = (cx - this.panX) / this.scale;
     const y = (this.panY - cy) / this.scale;
     return { x, y };
   }
 
-  setWorkpiece(x, y, w, h) {
+  setWorkpiece(x, y, w, h, rotation = null, visible = true) {
     this.workpiece.x = x;
     this.workpiece.y = y;
     this.workpiece.width = w;
     this.workpiece.height = h;
+    if (rotation !== null && !isNaN(rotation)) {
+      this.workpiece.rotation = ((rotation % 360) + 360) % 360;
+    }
+    this.workpiece.visible = visible;
     this.render();
   }
 
-  setToolpaths(paths) {
+  setRotation(deg) {
+    this.workpiece.rotation = ((deg % 360) + 360) % 360;
+    this.render();
+  }
+
+  setVisible(visible) {
+    this.workpiece.visible = visible;
+    this.render();
+  }
+
+  setToolpaths(paths, makeVisible = true) {
     this.toolpaths = paths || [];
+    if (makeVisible && this.toolpaths.length > 0) {
+      this.workpiece.visible = true;
+    }
     this.render();
   }
 
-  getCornerHandles() {
-    const wp = this.workpiece;
-    const halfW = wp.width / 2;
-    const halfH = wp.height / 2;
-    return {
-      nw: { pt: this.mmToCanvas(wp.x - halfW, wp.y + halfH) },
-      ne: { pt: this.mmToCanvas(wp.x + halfW, wp.y + halfH) },
-      sw: { pt: this.mmToCanvas(wp.x - halfW, wp.y - halfH) },
-      se: { pt: this.mmToCanvas(wp.x + halfW, wp.y - halfH) }
-    };
+  setRasterPreview(img, makeVisible = true) {
+    this.rasterPreviewImg = img;
+    if (makeVisible && img) {
+      this.workpiece.visible = true;
+    }
+    this.render();
   }
 
   setLaserPosition(x, y) {
@@ -117,40 +147,142 @@ class BedVisualizer {
     this.render();
   }
 
+  // Helper: Get corner points of the rotated workpiece in canvas pixels
+  getWorkpieceCorners() {
+    const wp = this.workpiece;
+    const center = this.mmToCanvas(wp.x, wp.y);
+    const hw = (wp.width / 2) * this.scale;
+    const hh = (wp.height / 2) * this.scale;
+    const rad = (wp.rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+
+    // Local corner offsets relative to center
+    // Machine Y is up, Canvas Y is down
+    const locals = {
+      nw: { x: -hw, y: -hh },
+      ne: { x: hw, y: -hh },
+      se: { x: hw, y: hh },
+      sw: { x: -hw, y: hh }
+    };
+
+    const corners = {};
+    for (const key in locals) {
+      const lx = locals[key].x;
+      const ly = locals[key].y;
+      corners[key] = {
+        x: center.x + (lx * cos - ly * sin),
+        y: center.y + (lx * sin + ly * cos),
+        localX: lx,
+        localY: ly
+      };
+    }
+    return { center, corners, hw, hh, rad, cos, sin };
+  }
+
+  // 4 Corner Resize Handles (solid square handles)
+  getCornerResizeHandles() {
+    const { corners } = this.getWorkpieceCorners();
+    return corners;
+  }
+
+  // 4 Corner Rotate Handles with curved arrows + 1 Top Stalk Rotate Handle
+  getCornerRotateHandles() {
+    const { center, hw, hh, rad, cos, sin } = this.getWorkpieceCorners();
+    const offsetDist = 18; // outward distance in pixels from corner
+    const diag = Math.SQRT2;
+
+    const rotLocals = {
+      nw: { x: -hw - (offsetDist / diag), y: -hh - (offsetDist / diag) },
+      ne: { x: hw + (offsetDist / diag), y: -hh - (offsetDist / diag) },
+      se: { x: hw + (offsetDist / diag), y: hh + (offsetDist / diag) },
+      sw: { x: -hw - (offsetDist / diag), y: hh + (offsetDist / diag) },
+      topStalk: { x: 0, y: -hh - 24 } // stalk handle 24px above top center
+    };
+
+    const rotHandles = {};
+    for (const key in rotLocals) {
+      const lx = rotLocals[key].x;
+      const ly = rotLocals[key].y;
+      rotHandles[key] = {
+        x: center.x + (lx * cos - ly * sin),
+        y: center.y + (lx * sin + ly * cos),
+        isStalk: key === 'topStalk'
+      };
+    }
+    return rotHandles;
+  }
+
+  // Transform canvas mouse coordinates to workpiece unrotated local coordinates (mm)
+  canvasToWorkpieceLocal(mx, my) {
+    const { center, rad } = this.getWorkpieceCorners();
+    const dx = mx - center.x;
+    const dy = my - center.y;
+    // Rotate backwards by -rad
+    const lx = dx * Math.cos(-rad) - dy * Math.sin(-rad);
+    const ly = dx * Math.sin(-rad) + dy * Math.cos(-rad);
+    return { lx, ly, mmX: lx / this.scale, mmY: ly / this.scale };
+  }
+
   initEvents() {
     this.canvas.addEventListener('mousedown', (e) => {
       const rect = this.canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
       const mmPos = this.canvasToMm(mx, my);
-      
-      // 1. Check if clicked on a corner resize handle (within 8px)
-      const handles = this.getCornerHandles();
-      let clickedHandle = null;
-      for (const hKey in handles) {
-        const hp = handles[hKey].pt;
-        if (Math.hypot(mx - hp.x, my - hp.y) <= 9) {
-          clickedHandle = hKey;
+      this.currentMouseX = mx;
+      this.currentMouseY = my;
+
+      // If workpiece is NOT visible yet (no file loaded), all clicks pan/zoom only!
+      if (!this.workpiece.visible) {
+        this.isPanning = true;
+        this.lastMouseX = mx;
+        this.lastMouseY = my;
+        return;
+      }
+
+      const { center } = this.getWorkpieceCorners();
+
+      // 1. Check if clicked on a Corner Rotate Handle (radius 12px)
+      const rotHandles = this.getCornerRotateHandles();
+      let clickedRotHandle = null;
+      for (const rKey in rotHandles) {
+        const hp = rotHandles[rKey];
+        if (Math.hypot(mx - hp.x, my - hp.y) <= 12) {
+          clickedRotHandle = rKey;
           break;
         }
       }
 
-      if (e.button === 0 && clickedHandle) {
-        this.workpiece.isResizing = true;
-        this.workpiece.activeCorner = clickedHandle;
+      if (e.button === 0 && clickedRotHandle) {
+        this.workpiece.isRotating = true;
+        this.workpiece.rotateStartAngle = Math.atan2(my - center.y, mx - center.x);
+        this.workpiece.rotateStartDeg = this.workpiece.rotation;
         return;
       }
 
-      // 2. Check if clicked inside workpiece body
-      const halfW = this.workpiece.width / 2;
-      const halfH = this.workpiece.height / 2;
-      const inside = (
-        mmPos.x >= this.workpiece.x - halfW &&
-        mmPos.x <= this.workpiece.x + halfW &&
-        mmPos.y >= this.workpiece.y - halfH &&
-        mmPos.y <= this.workpiece.y + halfH
-      );
-      
+      // 2. Check if clicked on a Corner Resize Handle (radius 8px)
+      const resizeHandles = this.getCornerResizeHandles();
+      let clickedResizeHandle = null;
+      for (const hKey in resizeHandles) {
+        const hp = resizeHandles[hKey];
+        if (Math.hypot(mx - hp.x, my - hp.y) <= 9) {
+          clickedResizeHandle = hKey;
+          break;
+        }
+      }
+
+      if (e.button === 0 && clickedResizeHandle) {
+        this.workpiece.isResizing = true;
+        this.workpiece.activeCorner = clickedResizeHandle;
+        return;
+      }
+
+      // 3. Check if clicked inside workpiece body
+      const { hw, hh } = this.getWorkpieceCorners();
+      const local = this.canvasToWorkpieceLocal(mx, my);
+      const inside = Math.abs(local.lx) <= hw && Math.abs(local.ly) <= hh;
+
       if (e.button === 0 && inside) {
         this.workpiece.isDragging = true;
         this.workpiece.dragOffsetX = mmPos.x - this.workpiece.x;
@@ -167,16 +299,42 @@ class BedVisualizer {
       const rect = this.canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
+      this.currentMouseX = mx;
+      this.currentMouseY = my;
       const mmPos = this.canvasToMm(mx, my);
 
+      // Handle active rotation
+      if (this.workpiece.isRotating) {
+        const { center } = this.getWorkpieceCorners();
+        const currentAngle = Math.atan2(my - center.y, mx - center.x);
+        const deltaRad = currentAngle - this.workpiece.rotateStartAngle;
+        const deltaDeg = (deltaRad * 180) / Math.PI;
+        let newAngle = (this.workpiece.rotateStartDeg + deltaDeg) % 360;
+
+        // Shift key snaps to 15 degree increments
+        if (e.shiftKey) {
+          newAngle = Math.round(newAngle / 15) * 15;
+        }
+        newAngle = ((newAngle % 360) + 360) % 360;
+        this.workpiece.rotation = Math.round(newAngle * 10) / 10;
+
+        if (window.onWorkpieceRotated) {
+          window.onWorkpieceRotated(this.workpiece.rotation);
+        }
+        this.render();
+        return;
+      }
+
+      // Handle active resizing
       if (this.workpiece.isResizing) {
-        const dx = Math.abs(mmPos.x - this.workpiece.x);
-        const dy = Math.abs(mmPos.y - this.workpiece.y);
-        let newW = Math.max(5.0, Math.round(dx * 2 * 10) / 10);
-        let newH = Math.max(5.0, Math.round(dy * 2 * 10) / 10);
-        
+        const local = this.canvasToWorkpieceLocal(mx, my);
+        let newW = Math.max(5.0, Math.round(Math.abs(local.mmX) * 2 * 10) / 10);
+        let newH = Math.max(5.0, Math.round(Math.abs(local.mmY) * 2 * 10) / 10);
+
         if (window.isAspectLocked && window.isAspectLocked()) {
-          const aspect = window.getWorkpieceAspectRatio ? window.getWorkpieceAspectRatio() : (this.workpiece.width / this.workpiece.height);
+          const aspect = window.getWorkpieceAspectRatio
+            ? window.getWorkpieceAspectRatio()
+            : this.workpiece.width / this.workpiece.height;
           newH = Math.round((newW / (aspect || 1.0)) * 10) / 10;
         }
 
@@ -186,62 +344,92 @@ class BedVisualizer {
           window.onWorkpieceResized(newW, newH);
         }
         this.render();
-      } else if (this.workpiece.isDragging) {
+        return;
+      }
+
+      // Handle active dragging (moving across bed)
+      if (this.workpiece.isDragging) {
         let newX = mmPos.x - this.workpiece.dragOffsetX;
         let newY = mmPos.y - this.workpiece.dragOffsetY;
-        
+
         // Clamp inside bed with margins
         const halfW = this.workpiece.width / 2;
         const halfH = this.workpiece.height / 2;
         newX = Math.max(halfW, Math.min(this.bedWidth - halfW, newX));
         newY = Math.max(halfH, Math.min(this.bedHeight - halfH, newY));
-        
+
         this.workpiece.x = Math.round(newX * 10) / 10;
         this.workpiece.y = Math.round(newY * 10) / 10;
-        
+
         if (window.onWorkpieceMoved) {
           window.onWorkpieceMoved(this.workpiece.x, this.workpiece.y);
         }
         this.render();
-      } else if (this.isPanning) {
+        return;
+      }
+
+      // Handle canvas panning
+      if (this.isPanning) {
         this.panX += mx - this.lastMouseX;
         this.panY += my - this.lastMouseY;
         this.lastMouseX = mx;
         this.lastMouseY = my;
         this.render();
-      } else {
-        // Cursor feedback
-        const handles = this.getCornerHandles();
-        let onHandle = null;
-        for (const hKey in handles) {
-          const hp = handles[hKey].pt;
-          if (Math.hypot(mx - hp.x, my - hp.y) <= 9) {
-            onHandle = hKey;
-            break;
-          }
-        }
-        if (onHandle === 'nw' || onHandle === 'se') {
-          this.canvas.style.cursor = 'nwse-resize';
-        } else if (onHandle === 'ne' || onHandle === 'sw') {
-          this.canvas.style.cursor = 'nesw-resize';
-        } else {
-          const halfW = this.workpiece.width / 2;
-          const halfH = this.workpiece.height / 2;
-          const inside = (
-            mmPos.x >= this.workpiece.x - halfW &&
-            mmPos.x <= this.workpiece.x + halfW &&
-            mmPos.y >= this.workpiece.y - halfH &&
-            mmPos.y <= this.workpiece.y + halfH
-          );
-          this.canvas.style.cursor = inside ? 'move' : 'default';
+        return;
+      }
+
+      // Cursor feedback when hovering over elements
+      if (!this.workpiece.visible) {
+        this.canvas.style.cursor = 'default';
+        return;
+      }
+
+      // 1. Hovering rotate handles
+      const rotHandles = this.getCornerRotateHandles();
+      let onRotHandle = false;
+      for (const rKey in rotHandles) {
+        const hp = rotHandles[rKey];
+        if (Math.hypot(mx - hp.x, my - hp.y) <= 12) {
+          onRotHandle = true;
+          break;
         }
       }
+      if (onRotHandle) {
+        this.canvas.style.cursor = 'crosshair';
+        return;
+      }
+
+      // 2. Hovering resize handles
+      const resizeHandles = this.getCornerResizeHandles();
+      let onResizeHandle = null;
+      for (const hKey in resizeHandles) {
+        const hp = resizeHandles[hKey];
+        if (Math.hypot(mx - hp.x, my - hp.y) <= 9) {
+          onResizeHandle = hKey;
+          break;
+        }
+      }
+      if (onResizeHandle) {
+        this.canvas.style.cursor =
+          onResizeHandle === 'nw' || onResizeHandle === 'se'
+            ? 'nwse-resize'
+            : 'nesw-resize';
+        return;
+      }
+
+      // 3. Hovering workpiece body
+      const { hw, hh } = this.getWorkpieceCorners();
+      const local = this.canvasToWorkpieceLocal(mx, my);
+      const inside = Math.abs(local.lx) <= hw && Math.abs(local.ly) <= hh;
+      this.canvas.style.cursor = inside ? 'move' : 'default';
     });
 
     window.addEventListener('mouseup', () => {
       this.workpiece.isDragging = false;
       this.workpiece.isResizing = false;
+      this.workpiece.isRotating = false;
       this.isPanning = false;
+      this.render();
     });
 
     this.canvas.addEventListener('wheel', (e) => {
@@ -250,10 +438,10 @@ class BedVisualizer {
       const rect = this.canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      
+
       const mmBefore = this.canvasToMm(mx, my);
       this.scale = Math.max(0.2, Math.min(8.0, this.scale * zoomFactor));
-      
+
       // Keep mouse position anchored
       this.panX = mx - mmBefore.x * this.scale;
       this.panY = my + mmBefore.y * this.scale;
@@ -261,30 +449,55 @@ class BedVisualizer {
     });
   }
 
+  // Draw a curved circular arrow icon on canvas
+  drawCurvedArrow(ctx, cx, cy, radius, startAngle, endAngle, isClockwise = true) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, startAngle, endAngle, !isClockwise);
+    ctx.stroke();
+
+    // Arrowhead at endAngle
+    const arrowX = cx + radius * Math.cos(endAngle);
+    const arrowY = cy + radius * Math.sin(endAngle);
+    const tangent = endAngle + (isClockwise ? Math.PI / 2 : -Math.PI / 2);
+    const arrowSize = 3.5;
+
+    ctx.beginPath();
+    ctx.moveTo(arrowX, arrowY);
+    ctx.lineTo(
+      arrowX - arrowSize * Math.cos(tangent - Math.PI / 6),
+      arrowY - arrowSize * Math.sin(tangent - Math.PI / 6)
+    );
+    ctx.lineTo(
+      arrowX - arrowSize * Math.cos(tangent + Math.PI / 6),
+      arrowY - arrowSize * Math.sin(tangent + Math.PI / 6)
+    );
+    ctx.closePath();
+    ctx.fill();
+  }
+
   render() {
     const ctx = this.ctx;
     const w = this.canvas.width;
     const h = this.canvas.height;
-    
+
     ctx.clearRect(0, 0, w, h);
-    
+
     // 1. Draw 72x72 cm Glass Base Platform Outline
-    // Assume machine is centered on 72cm plate
     const glassOffX = -(this.glassWidth - this.bedWidth) / 2;
     const glassOffY = -(this.glassHeight - this.bedHeight) / 2;
     const gTopLeft = this.mmToCanvas(glassOffX, glassOffY + this.glassHeight);
     const gW = this.glassWidth * this.scale;
     const gH = this.glassHeight * this.scale;
-    
-    ctx.strokeStyle = 'rgba(255, 145, 0, 0.25)';
+
+    ctx.strokeStyle = 'rgba(255, 145, 0, 0.22)';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 6]);
     ctx.strokeRect(gTopLeft.x, gTopLeft.y, gW, gH);
-    ctx.fillStyle = 'rgba(255, 145, 0, 0.03)';
+    ctx.fillStyle = 'rgba(255, 145, 0, 0.02)';
     ctx.fillRect(gTopLeft.x, gTopLeft.y, gW, gH);
     ctx.setLineDash([]);
-    
-    ctx.fillStyle = 'rgba(255, 145, 0, 0.6)';
+
+    ctx.fillStyle = 'rgba(255, 145, 0, 0.55)';
     ctx.font = '10px JetBrains Mono';
     ctx.fillText('720 × 720 mm Black Glass Platform', gTopLeft.x + 10, gTopLeft.y + 18);
 
@@ -292,7 +505,7 @@ class BedVisualizer {
     const bedTopLeft = this.mmToCanvas(0, this.bedHeight);
     const bedW = this.bedWidth * this.scale;
     const bedH = this.bedHeight * this.scale;
-    
+
     ctx.fillStyle = '#11141d';
     ctx.fillRect(bedTopLeft.x, bedTopLeft.y, bedW, bedH);
     ctx.strokeStyle = 'rgba(0, 229, 255, 0.5)';
@@ -306,7 +519,7 @@ class BedVisualizer {
     ctx.shadowBlur = 8;
     ctx.strokeStyle = '#ff9100';
     ctx.lineWidth = 2.0;
-    
+
     // Outer bullseye ring
     ctx.beginPath();
     ctx.arc(originP.x, originP.y, 14, 0, Math.PI * 2);
@@ -343,8 +556,7 @@ class BedVisualizer {
     ctx.fillText('↑ +Y (Depth)', originP.x - 4, originP.y - 42);
     ctx.restore();
 
-    // 3. Draw Grid Lines
-    // 10mm grid
+    // 3. Draw Grid Lines (10mm minor, 50mm major)
     ctx.lineWidth = 0.5;
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
     for (let x = 10; x < this.bedWidth; x += 10) {
@@ -403,66 +615,193 @@ class BedVisualizer {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // 5. Draw Workpiece Placement
-    const wp = this.workpiece;
-    const wpX = wp.x - wp.width / 2;
-    const wpY = wp.y - wp.height / 2;
-    const wpTopLeft = this.mmToCanvas(wpX, wpY + wp.height);
-    const wpW = wp.width * this.scale;
-    const wpH = wp.height * this.scale;
+    // 5. WORKPIECE BOUNDARY & ROTATION / RESIZE TOOLS
+    // Workpiece boundary is ONLY rendered after a file or preset is loaded!
+    if (!this.workpiece.visible) {
+      // Empty Bed Watermark Prompt
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.28)';
+      ctx.font = '12px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        '✦ FALCON LASER BED READY — Drop SVG / Image or Select a Preset to Position Workpiece',
+        centerP.x,
+        centerP.y - 12
+      );
+      ctx.font = '10px JetBrains Mono';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.fillText('Working Envelope: 400 × 415 mm | Platform: 720 × 720 mm', centerP.x, centerP.y + 8);
+      ctx.restore();
+    } else {
+      // RENDER WORKPIECE (ROTATED)
+      const wp = this.workpiece;
+      const { center, hw, hh, rad } = this.getWorkpieceCorners();
+      const wpW = wp.width * this.scale;
+      const wpH = wp.height * this.scale;
 
-    // Fill & stroke
-    ctx.fillStyle = 'rgba(255, 145, 0, 0.12)';
-    ctx.fillRect(wpTopLeft.x, wpTopLeft.y, wpW, wpH);
-    ctx.strokeStyle = 'rgba(255, 145, 0, 0.85)';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(wpTopLeft.x, wpTopLeft.y, wpW, wpH);
+      ctx.save();
+      // Translate to workpiece center and rotate
+      ctx.translate(center.x, center.y);
+      ctx.rotate(-rad); // Note: canvas coordinates rotation
 
-    // Center crosshair in workpiece
-    const wpCenter = this.mmToCanvas(wp.x, wp.y);
-    ctx.strokeStyle = 'rgba(255, 145, 0, 0.9)';
-    ctx.beginPath();
-    ctx.moveTo(wpCenter.x - 8, wpCenter.y);
-    ctx.lineTo(wpCenter.x + 8, wpCenter.y);
-    ctx.moveTo(wpCenter.x, wpCenter.y - 8);
-    ctx.lineTo(wpCenter.x, wpCenter.y + 8);
-    ctx.stroke();
+      // Workpiece Box Fill & Stroke
+      ctx.fillStyle = 'rgba(255, 145, 0, 0.12)';
+      ctx.fillRect(-hw, -hh, wpW, wpH);
+      ctx.strokeStyle = 'rgba(255, 145, 0, 0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-hw, -hh, wpW, wpH);
 
-    // Dimensions text
-    ctx.fillStyle = '#ff9100';
-    ctx.font = '10px Outfit';
-    ctx.fillText(`${wp.width} × ${wp.height} mm`, wpTopLeft.x + 6, wpTopLeft.y - 6);
+      // Workpiece Center Crosshair
+      ctx.strokeStyle = 'rgba(255, 145, 0, 0.9)';
+      ctx.beginPath();
+      ctx.moveTo(-8, 0);
+      ctx.lineTo(8, 0);
+      ctx.moveTo(0, -8);
+      ctx.lineTo(0, 8);
+      ctx.stroke();
 
-    // Draw 4 corner resize handles
-    const handles = this.getCornerHandles();
-    ctx.fillStyle = '#ff9100';
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.5;
-    for (const hKey in handles) {
-      const hPt = handles[hKey].pt;
-      ctx.fillRect(hPt.x - 4, hPt.y - 4, 8, 8);
-      ctx.strokeRect(hPt.x - 4, hPt.y - 4, 8, 8);
-    }
-
-    // 6. Draw Vector Toolpaths
-    if (this.toolpaths && this.toolpaths.length > 0) {
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.0;
-      for (const poly of this.toolpaths) {
-        if (!poly || poly.length < 2) continue;
-        ctx.beginPath();
-        for (let i = 0; i < poly.length; i++) {
-          const px = wpX + poly[i][0] * wp.width;
-          const py = wpY + poly[i][1] * wp.height;
-          const cPt = this.mmToCanvas(px, py);
-          if (i === 0) ctx.moveTo(cPt.x, cPt.y);
-          else ctx.lineTo(cPt.x, cPt.y);
+      // Toolpaths (Vector)
+      if (this.toolpaths && this.toolpaths.length > 0) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.0;
+        for (const poly of this.toolpaths) {
+          if (!poly || poly.length < 2) continue;
+          ctx.beginPath();
+          for (let i = 0; i < poly.length; i++) {
+            // Normalized 0-1 mapped relative to workpiece center (-hw to +hw, -hh to +hh)
+            // SVG Y is inverted (0 is top)
+            const px = -hw + poly[i][0] * wpW;
+            const py = -hh + poly[i][1] * wpH;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
         }
+      }
+
+      ctx.restore();
+
+      // DRAW ROTATED CONTROLS & HANDLES IN SCREEN SPACE
+      const { corners } = this.getWorkpieceCorners();
+      const rotHandles = this.getCornerRotateHandles();
+
+      // Dimension & Rotation HUD Label above Workpiece
+      const topStalk = rotHandles.topStalk;
+      ctx.save();
+      ctx.fillStyle = '#ff9100';
+      ctx.font = 'bold 10px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `${wp.width.toFixed(1)} × ${wp.height.toFixed(1)} mm  |  ⟳ ${wp.rotation.toFixed(1)}°`,
+        topStalk.x,
+        topStalk.y - 10
+      );
+      ctx.restore();
+
+      // Top Stalk Connection Line
+      const topCenterCanvas = {
+        x: (corners.nw.x + corners.ne.x) / 2,
+        y: (corners.nw.y + corners.ne.y) / 2
+      };
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(topCenterCanvas.x, topCenterCanvas.y);
+      ctx.lineTo(topStalk.x, topStalk.y);
+      ctx.stroke();
+      ctx.restore();
+
+      // 4 Corner Resize Handles (Square badges)
+      ctx.fillStyle = '#ff9100';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      for (const hKey in corners) {
+        const cp = corners[hKey];
+        ctx.fillRect(cp.x - 4, cp.y - 4, 8, 8);
+        ctx.strokeRect(cp.x - 4, cp.y - 4, 8, 8);
+      }
+
+      // Corner Rotate Handles with Curved Arrows + Top Stalk
+      for (const rKey in rotHandles) {
+        const rp = rotHandles[rKey];
+        ctx.save();
+        ctx.shadowColor = '#00e5ff';
+        ctx.shadowBlur = 6;
+
+        // Badge Circle
+        ctx.fillStyle = '#11141d';
+        ctx.beginPath();
+        ctx.arc(rp.x, rp.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 1.5;
         ctx.stroke();
+
+        // Curved Circular Arrow Icon inside Rotate Handle
+        ctx.strokeStyle = '#00e5ff';
+        ctx.fillStyle = '#00e5ff';
+        ctx.lineWidth = 1.2;
+        this.drawCurvedArrow(ctx, rp.x, rp.y, 4.5, -Math.PI / 4, (4 * Math.PI) / 3, true);
+
+        ctx.restore();
+      }
+
+      // Real-time floating HUD badge while interacting
+      if (this.workpiece.isRotating) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(17, 20, 29, 0.92)';
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 1;
+        const tipX = this.currentMouseX + 16;
+        const tipY = this.currentMouseY - 16;
+        ctx.beginPath();
+        ctx.roundRect(tipX, tipY - 18, 90, 24, 4);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#00e5ff';
+        ctx.font = 'bold 11px JetBrains Mono';
+        ctx.textAlign = 'center';
+        ctx.fillText(`⟳ ${wp.rotation.toFixed(1)}°`, tipX + 45, tipY - 2);
+        ctx.restore();
+      } else if (this.workpiece.isResizing) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(17, 20, 29, 0.92)';
+        ctx.strokeStyle = '#ff9100';
+        ctx.lineWidth = 1;
+        const tipX = this.currentMouseX + 16;
+        const tipY = this.currentMouseY - 16;
+        ctx.beginPath();
+        ctx.roundRect(tipX, tipY - 18, 120, 24, 4);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#ff9100';
+        ctx.font = 'bold 11px JetBrains Mono';
+        ctx.textAlign = 'center';
+        ctx.fillText(`📐 ${wp.width.toFixed(1)} × ${wp.height.toFixed(1)} mm`, tipX + 60, tipY - 2);
+        ctx.restore();
+      } else if (this.workpiece.isDragging) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(17, 20, 29, 0.92)';
+        ctx.strokeStyle = '#ff9100';
+        ctx.lineWidth = 1;
+        const tipX = this.currentMouseX + 16;
+        const tipY = this.currentMouseY - 16;
+        ctx.beginPath();
+        ctx.roundRect(tipX, tipY - 18, 130, 24, 4);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#ff9100';
+        ctx.font = 'bold 11px JetBrains Mono';
+        ctx.textAlign = 'center';
+        ctx.fillText(`⌖ X:${wp.x.toFixed(1)} Y:${wp.y.toFixed(1)} mm`, tipX + 65, tipY - 2);
+        ctx.restore();
       }
     }
 
-    // 7. Draw Real-time Laser Head Position
+    // 6. Draw Real-time Laser Head Position
     const lPos = this.mmToCanvas(this.laserPos.x, this.laserPos.y);
     ctx.save();
     // Glowing laser dot
@@ -486,3 +825,6 @@ class BedVisualizer {
     ctx.restore();
   }
 }
+
+// Attach to window
+window.BedVisualizer = BedVisualizer;
