@@ -691,7 +691,7 @@ class BedVisualizer {
       ctx.save();
       // Translate to workpiece center and rotate
       ctx.translate(center.x, center.y);
-      ctx.rotate(-rad); // Note: canvas coordinates rotation
+      ctx.rotate(rad); // Correct: rotate in same direction as handle and mouse movement
 
       // Workpiece Box Fill & Stroke
       ctx.fillStyle = 'rgba(255, 145, 0, 0.12)';
@@ -726,6 +726,13 @@ class BedVisualizer {
           }
           ctx.stroke();
         }
+      }
+
+      // Raster preview image (if loaded)
+      if (this.rasterPreviewImg) {
+        try {
+          ctx.drawImage(this.rasterPreviewImg, -hw, -hh, wpW, wpH);
+        } catch (e) {}
       }
 
       ctx.restore();

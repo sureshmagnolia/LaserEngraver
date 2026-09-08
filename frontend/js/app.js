@@ -1013,9 +1013,9 @@ class FalconApp {
     else if (a === 'bottom-right') { ax = w / 2; ay = -h / 2; }
     else { ax = 0; ay = 0; } // center
 
-    // Rotated anchor offset
-    const deltaX = ax * Math.cos(rad) - ay * Math.sin(rad);
-    const deltaY = ax * Math.sin(rad) + ay * Math.cos(rad);
+    // Rotated anchor offset in machine coordinates (Clockwise rotation in +Y UP machine coordinates)
+    const deltaX = ax * Math.cos(rad) + ay * Math.sin(rad);
+    const deltaY = -ax * Math.sin(rad) + ay * Math.cos(rad);
 
     // Target workpiece center
     const newCx = Math.round((lx - deltaX) * 10) / 10;
