@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Falcon Laser Studio | Creality CR-Laser Falcon 5W</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="dark-theme">
+  <!-- TOP HEADER -->
+  <header id="appHeader" class="app-header">
+    <div class="header-brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10" stroke="#00e5ff" stroke-width="1.5" stroke-dasharray="3 3"/>
+          <circle cx="12" cy="12" r="4" fill="#00e5ff"/>
+          <line x1="12" y1="2" x2="12" y2="6" stroke="#00e5ff"/>
+          <line x1="12" y1="18" x2="12" y2="22" stroke="#00e5ff"/>
+          <line x1="2" y1="12" x2="6" y2="12" stroke="#00e5ff"/>
+          <line x1="18" y1="12" x2="22" y2="12" stroke="#00e5ff"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand-title">Falcon Laser Studio</h1>
+        <span class="brand-subtitle">Creality Falcon 5W • 400×415 mm Bed</span>
+      </div>
+    </div>
+
+    <!-- STATUS HUD -->
+    <div class="header-hud">
+      <div id="statusBadge" class="status-badge disconnected">
+        <span class="status-dot"></span>
+        <span id="statusText">DISCONNECTED</span>
+      </div>
+      <div class="hud-stat">
+        <span class="hud-label">COORDINATES</span>
+        <span id="hudCoords" class="hud-value mono">X: 0.00 | Y: 0.00</span>
+      </div>
+      <div class="hud-stat">
+        <span class="hud-label">FEED / POWER</span>
+        <span id="hudFeedPower" class="hud-value mono">F: 0 | S: 0</span>
+      </div>
+    </div>
+
+    <!-- HARDWARE CONTROLS -->
+    <div class="header-actions">
+      <button id="btnWebSerial" class="btn btn-primary" title="Connect directly to Falcon via Web Serial USB in Chrome/Edge">
+        ⚡ USB Connect
+      </button>
+      <div class="port-group">
+        <select id="portSelect" class="select-input" title="Select Local COM Port">
+          <option value="COM9">COM9 (Creality Falcon)</option>
+        </select>
+        <button id="btnRefreshPorts" class="btn-icon" title="Refresh Local COM Ports">↻</button>
+      </div>
+      <button id="btnConnect" class="btn btn-connect" title="Connect via local Python server">Local Bridge</button>
+      <button id="btnEmergencyStop" class="btn btn-emergency" title="Emergency Stop">STOP</button>
+    </div>
+  </header>
+
+  <!-- MAIN APP CONTAINER -->
+  <main class="app-main">
+    <!-- LEFT SIDEBAR: INPUT & PRESETS -->
+    <aside class="sidebar sidebar-left">
+      <!-- UPLOAD CARD -->
+      <section class="panel-card">
+        <div class="card-header">
+          <h2 class="card-title">Artwork & File Input</h2>
+          <span class="badge">SVG / PNG / JPG</span>
+        </div>
+        <div id="dropZone" class="drop-zone">
+          <input type="file" id="fileInput" accept=".svg,.png,.jpg,.jpeg,.bmp" class="file-input-hidden">
+          <div class="drop-zone-content">
+            <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p class="drop-text">Drag & drop <strong>SVG</strong>, <strong>PNG</strong> or <strong>JPG</strong></p>
+            <span class="drop-hint">or click to browse from PC</span>
+          </div>
+        </div>
+        <div id="fileLoadedInfo" class="file-info hidden">
+          <div class="file-meta">
+            <span id="loadedFileName" class="file-name">filename.png</span>
+            <span id="loadedFileMeta" class="file-details">1024x1024 px • PNG</span>
+          </div>
+          <button id="btnClearFile" class="btn-text-danger" title="Clear file">×</button>
+        </div>
+      </section>
+
+      <!-- ENGRAVING MODE SELECTOR -->
+      <section class="panel-card">
+        <div class="card-header">
+          <h2 class="card-title">Engraving Mode</h2>
+        </div>
+        <div class="mode-toggle-group">
+          <button id="btnModeVector" class="btn-mode active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="4 19 8 5 12 19 16 9 20 19"/>
+            </svg>
+            <div class="mode-text">
+              <strong>Vector Line Trace</strong>
+              <small>Continuous lines, zero raster sweeps</small>
+            </div>
+          </button>
+          <button id="btnModeRaster" class="btn-mode">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="6" x2="21" y2="6"/>
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+            <div class="mode-text">
+              <strong>Inkjet-Style Raster</strong>
+              <small>Line-by-line dithering & shading</small>
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <!-- PRESETS CARD -->
+      <section class="panel-card">
+        <div class="card-header">
+          <h2 class="card-title">Pre-Tuned Presets</h2>
+        </div>
+        <div class="presets-list">
+          <button class="preset-btn" data-preset="chittur_4cm">
+            <div class="preset-icon">🪙</div>
+            <div class="preset-info">
+              <strong>Chittur 4cm Keychain</strong>
+              <small>35mm design for 40mm discs • F900 S280</small>
+            </div>
+          </button>
+          <button class="preset-btn" data-preset="chittur_10cm">
+            <div class="preset-icon">🛡️</div>
+            <div class="preset-info">
+              <strong>Chittur 10cm Plaque</strong>
+              <small>90mm design for 100mm discs • F1000 S320</small>
+            </div>
+          </button>
+          <button class="preset-btn" data-preset="bed_scale_200mm">
+            <div class="preset-icon">📐</div>
+            <div class="preset-info">
+              <strong>200×200 Bed Scale</strong>
+              <small>Targets for 40mm & 100mm blanks</small>
+            </div>
+          </button>
+          <button class="preset-btn" data-preset="bed_scale_380mm">
+            <div class="preset-icon">🌐</div>
+            <div class="preset-info">
+              <strong>Full-Bed 380×380 mm Grid</strong>
+              <small>Full Falcon reach on 72cm glass</small>
+            </div>
+          </button>
+        </div>
+      </section>
+    </aside>
+
+    <!-- CENTER STAGE: WORKSPACE VIEW & PHOTO STUDIO -->
+    <main class="center-stage">
+      <div class="view-tabs">
+        <button id="tabBedMap" class="view-tab active">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          2D Bed Map (400×415 mm)
+        </button>
+        <button id="tabPhotoStudio" class="view-tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          Photo-to-Drawing & Tuning Studio
+        </button>
+        <button id="tabBedScale" class="view-tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="2" y1="12" x2="22" y2="12"/>
+            <line x1="12" y1="2" x2="12" y2="22"/>
+            <circle cx="12" cy="12" r="8"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          Bed Scale (Glass / Wood / Metal)
+        </button>
+      </div>
+
+      <!-- VIEW 1: INTERACTIVE BED CANVAS -->
+      <div id="viewBedMap" class="view-panel active">
+        <div class="canvas-toolbar">
+          <div class="toolbar-left">
+            <span class="bed-dim-tag">Bed: 400 × 415 mm</span>
+            <span class="bed-dim-tag highlight">Base Glass: 72 × 72 cm</span>
+          </div>
+          <div class="toolbar-right">
+            <button id="btnZoomIn" class="btn-icon-tool" title="Zoom In">+</button>
+            <button id="btnZoomOut" class="btn-icon-tool" title="Zoom Out">-</button>
+            <button id="btnResetView" class="btn-icon-tool" title="Fit to Screen">⤢</button>
+          </div>
+        </div>
+        <div class="canvas-container">
+          <canvas id="bedCanvas"></canvas>
+          <div class="canvas-legend">
+            <span><span class="legend-dot gantry"></span> Falcon Head (Realtime)</span>
+            <span><span class="legend-dot workpiece"></span> Workpiece Boundary</span>
+            <span><span class="legend-dot toolpath"></span> Vector Toolpath</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW 2: PHOTO TO LINE DRAWING STUDIO -->
+      <div id="viewPhotoStudio" class="view-panel">
+        <div class="photo-studio-layout">
+          <!-- STUDIO CONTROLS -->
+          <div class="studio-controls-bar">
+            <!-- VECTOR TRACE CONTROLS -->
+            <div id="vectorTraceControls" class="filter-controls-row">
+              <div class="control-item">
+                <label for="filterAlgorithm">Tracing Algorithm</label>
+                <select id="filterAlgorithm" class="select-input">
+                  <option value="skeleton">Single-Stroke Skeleton (Zhang-Suen)</option>
+                  <option value="sketch" selected>Pencil Sketch (DoG / Dodge)</option>
+                  <option value="canny">Sharp Canny Edge Detection</option>
+                  <option value="threshold">Adaptive High-Contrast</option>
+                </select>
+              </div>
+
+              <div class="control-item slider-item">
+                <div class="slider-header">
+                  <label for="sliderDetail">Detail & Sensitivity</label>
+                  <span id="valDetail">50%</span>
+                </div>
+                <input type="range" id="sliderDetail" min="1" max="100" value="50" class="slider-input">
+              </div>
+
+              <div class="control-item slider-item">
+                <div class="slider-header">
+                  <label for="sliderThickness">Line Thickness</label>
+                  <span id="valThickness">1 px</span>
+                </div>
+                <input type="range" id="sliderThickness" min="1" max="5" value="1" class="slider-input">
+              </div>
+
+              <div class="control-item slider-item">
+                <div class="slider-header">
+                  <label for="sliderSmoothing">Vector Smoothness</label>
+                  <span id="valSmoothing">1.0</span>
+                </div>
+                <input type="range" id="sliderSmoothing" min="0.1" max="5.0" step="0.1" value="1.0" class="slider-input">
+              </div>
+
+              <div class="control-item checkbox-item">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="checkRemoveBg">
+                  <span class="toggle-slider"></span>
+                </label>
+                <span>AI Background Removal</span>
+              </div>
+
+              <div class="control-item checkbox-item">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="checkInvert">
+                  <span class="toggle-slider"></span>
+                </label>
+                <span>Invert Lines</span>
+              </div>
+
+              <button id="btnApplyFilter" class="btn btn-primary">Process Photo</button>
+            </div>
+
+            <!-- RASTER INKJET CONTROLS -->
+            <div id="rasterControls" class="filter-controls-row hidden">
+              <div class="control-item">
+                <label for="rasterDitherMode">Dithering Algorithm</label>
+                <select id="rasterDitherMode" class="select-input">
+                  <option value="floyd" selected>Floyd-Steinberg (Crisp Laser Halftone)</option>
+                  <option value="atkinson">Atkinson (Retro Detail Preservation)</option>
+                  <option value="grayscale">True Grayscale Power Modulation</option>
+                </select>
+              </div>
+
+              <div class="control-item slider-item">
+                <div class="slider-header">
+                  <label for="sliderContrast">Contrast</label>
+                  <span id="valContrast">1.0</span>
+                </div>
+                <input type="range" id="sliderContrast" min="0.5" max="2.0" step="0.05" value="1.0" class="slider-input">
+              </div>
+
+              <div class="control-item slider-item">
+                <div class="slider-header">
+                  <label for="sliderBrightness">Brightness</label>
+                  <span id="valBrightness">0</span>
+                </div>
+                <input type="range" id="sliderBrightness" min="-100" max="100" value="0" class="slider-input">
+              </div>
+
+              <div class="control-item slider-item">
+                <div class="slider-header">
+                  <label for="sliderInterval">Line Pitch (DPI)</label>
+                  <span id="valInterval">0.15 mm</span>
+                </div>
+                <input type="range" id="sliderInterval" min="0.08" max="0.30" step="0.01" value="0.15" class="slider-input">
+              </div>
+
+              <button id="btnApplyRaster" class="btn btn-primary">Update Dither Preview</button>
+            </div>
+          </div>
+
+          <!-- COMPARISON PANELS -->
+          <div class="preview-split">
+            <div class="preview-card">
+              <div class="preview-header">
+                <h3>Original Image</h3>
+              </div>
+              <div class="preview-box">
+                <img id="imgOriginalPreview" src="" alt="Original Upload" class="preview-image hidden">
+                <div id="placeholderOriginal" class="preview-placeholder">Upload an image to start</div>
+              </div>
+            </div>
+
+            <div class="preview-card">
+              <div class="preview-header">
+                <h3 id="processedPreviewTitle">Converted Line Drawing</h3>
+                <span id="pathCountTag" class="badge hidden">0 Paths</span>
+              </div>
+              <div class="preview-box">
+                <img id="imgProcessedPreview" src="" alt="Processed Result" class="preview-image hidden">
+                <div id="placeholderProcessed" class="preview-placeholder">Waiting for processing...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW 3: BED SCALE ENGRAVER (GLASS / WOOD / METAL) -->
+      <div id="viewBedScale" class="view-panel">
+        <div class="bed-scale-layout">
+          <div class="scale-intro-card">
+            <h2>Bed Reference Scale Engraver</h2>
+            <p>Generate and burn a permanent millimeter coordinate grid and workpiece target pockets directly onto your machine's bed platform. Select your surface material below for calibrated laser power and feedrates.</p>
+          </div>
+
+          <!-- MATERIAL PICKER -->
+          <div class="material-grid">
+            <div class="material-card active" data-material="glass">
+              <div class="material-icon">🪟</div>
+              <div class="material-info">
+                <h3>Black / Coated Glass</h3>
+                <span class="material-param-tag">Speed: 800 mm/min • Power: S450 (45%)</span>
+                <p>For your 72×72 cm black glass base. Frosted white etched lines.</p>
+                <div class="material-warning">⚠️ Requires paper masking tape or matte black paint before firing to prevent 450nm specular reflection!</div>
+              </div>
+            </div>
+
+            <div class="material-card" data-material="wood">
+              <div class="material-icon">🪵</div>
+              <div class="material-info">
+                <h3>Wood / MDF Spoilboard</h3>
+                <span class="material-param-tag">Speed: 1200 mm/min • Power: S300 (30%)</span>
+                <p>For sacrificial MDF or plywood beds. High-contrast charred black millimeter grid.</p>
+                <div class="material-note">✅ Zero masking needed. No reflection risk.</div>
+              </div>
+            </div>
+
+            <div class="material-card" data-material="metal">
+              <div class="material-icon">🛡️</div>
+              <div class="material-info">
+                <h3>Anodized / Coated Metal</h3>
+                <span class="material-param-tag">Speed: 600 mm/min • Power: S850 (85%)</span>
+                <p>For anodized aluminum plates or steel coated with laser marking compound. Permanent crisp white lines.</p>
+                <div class="material-note">✅ Direct marking on dye/coating layer.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCALE CONFIGURATION -->
+          <div class="scale-config-panel">
+            <div class="config-col">
+              <h4>1. Grid Coverage Area</h4>
+              <div class="size-options-group">
+                <label class="radio-card">
+                  <input type="radio" name="scaleSize" value="380" checked>
+                  <div>
+                    <strong>380 × 380 mm (Full Reach)</strong>
+                    <small>Covers entire gantry travel on your 72cm platform</small>
+                  </div>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="scaleSize" value="300">
+                  <div>
+                    <strong>300 × 300 mm (Medium)</strong>
+                    <small>Standard square work area</small>
+                  </div>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="scaleSize" value="200">
+                  <div>
+                    <strong>200 × 200 mm (Compact)</strong>
+                    <small>Quick central calibration zone</small>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div class="config-col">
+              <h4>2. Features to Include</h4>
+              <div class="feature-checkboxes">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="checkScale40mm" checked>
+                  <span><strong>40 mm Circular Pockets</strong> (Center + 4 Quadrant targets for keychains)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="checkScale100mm" checked>
+                  <span><strong>100 mm Circular Pocket</strong> (Center target for circular plaques)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="checkScaleRulers" checked>
+                  <span><strong>Millimeter Rulers</strong> (Numbered ticks along X and Y centerlines)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="checkScaleGrid" checked>
+                  <span><strong>50 mm Major Grid</strong> (Perpendicular guide lines)</span>
+                </label>
+              </div>
+
+              <div class="scale-action-buttons">
+                <button id="btnGenerateBedScale" class="btn btn-secondary full-width">⚡ Preview on Bed Map</button>
+                <button id="btnEngraveBedScaleDirect" class="btn btn-start full-width mt-2">▶ Burn Bed Scale Now</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- RIGHT SIDEBAR: TRANSFORM & HARDWARE CONTROLS -->
+    <aside class="sidebar sidebar-right">
+      <!-- WORKPIECE TRANSFORM CARD -->
+      <section class="panel-card">
+        <div class="card-header">
+          <h2 class="card-title">Placement & Dimensions</h2>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-field">
+            <label for="inputX">Center X (mm)</label>
+            <input type="number" id="inputX" value="190.0" step="1.0" class="num-input">
+          </div>
+          <div class="form-field">
+            <label for="inputY">Center Y (mm)</label>
+            <input type="number" id="inputY" value="190.0" step="1.0" class="num-input">
+          </div>
+          <div class="form-field">
+            <label for="inputWidth">Width (mm)</label>
+            <input type="number" id="inputWidth" value="40.0" step="1.0" class="num-input">
+          </div>
+          <div class="form-field">
+            <label for="inputHeight">Height (mm)</label>
+            <input type="number" id="inputHeight" value="40.0" step="1.0" class="num-input">
+          </div>
+        </div>
+        <div class="form-actions-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="checkLockAspect" checked> Lock Aspect
+          </label>
+          <button id="btnCenterBed" class="btn-small">Center on Bed</button>
+          <button id="btnBatch2x2" class="btn-small" title="Arrange 4 items in a 2x2 grid">2×2 Batch</button>
+        </div>
+
+        <!-- QUICK TRANSFORMS: FLIP & ROTATE -->
+        <div class="transform-toolbar mt-2">
+          <div class="toolbar-label">Flip & Mirror:</div>
+          <div class="transform-btn-group">
+            <button id="btnFlipH" class="btn-transform" title="Flip Horizontal (Mirror X)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="8 4 4 8 8 12"/>
+                <polyline points="16 4 20 8 16 12"/>
+                <line x1="4" y1="8" x2="20" y2="8"/>
+                <line x1="12" y1="2" x2="12" y2="22" stroke-dasharray="2 2"/>
+              </svg>
+              Flip H
+            </button>
+            <button id="btnFlipV" class="btn-transform" title="Flip Vertical (Mirror Y)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="4 8 8 4 12 8"/>
+                <polyline points="4 16 8 20 12 16"/>
+                <line x1="8" y1="4" x2="8" y2="20"/>
+                <line x1="2" y1="12" x2="22" y2="12" stroke-dasharray="2 2"/>
+              </svg>
+              Flip V
+            </button>
+            <button id="btnRotateCCW" class="btn-transform" title="Rotate 90° Counter-Clockwise">
+              ⟲ -90°
+            </button>
+            <button id="btnRotateCW" class="btn-transform" title="Rotate 90° Clockwise">
+              ⟳ +90°
+            </button>
+          </div>
+        </div>
+
+        <!-- QUICK SCALE BUTTONS -->
+        <div class="scale-buttons-row mt-2">
+          <div class="toolbar-label">Quick Scale:</div>
+          <div class="scale-btn-group">
+            <button class="btn-scale" data-scale="0.8">-20%</button>
+            <button class="btn-scale" data-scale="0.9">-10%</button>
+            <button class="btn-scale" data-scale="1.1">+10%</button>
+            <button class="btn-scale" data-scale="1.2">+20%</button>
+            <button class="btn-scale" data-scale="1.5">+50%</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- LASER CUTTING PARAMETERS CARD -->
+      <section class="panel-card">
+        <div class="card-header">
+          <h2 class="card-title">Laser Parameters</h2>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-field">
+            <label for="inputSpeed">Feedrate (mm/min)</label>
+            <input type="number" id="inputSpeed" value="900" step="50" class="num-input">
+          </div>
+          <div class="form-field">
+            <label for="inputPower">Laser Power (S)</label>
+            <input type="number" id="inputPower" value="280" min="0" max="1000" step="10" class="num-input">
+          </div>
+        </div>
+        <div class="form-grid-2 mt-2">
+          <div class="form-field">
+            <label for="inputPasses">Passes</label>
+            <input type="number" id="inputPasses" value="1" min="1" max="10" class="num-input">
+          </div>
+          <div class="form-field flex-end">
+            <button id="btnToggleLaserDot" class="btn-toggle-dot">
+              <span class="dot-indicator"></span> 0.5% Aiming Dot
+            </button>
+          </div>
+        </div>
+        <div class="mt-2">
+          <button id="btnTraceFrame" class="btn btn-secondary full-width">
+            🔍 Trace Frame (Aim Workpiece)
+          </button>
+        </div>
+      </section>
+
+      <!-- HARDWARE JOG PAD -->
+      <section class="panel-card">
+        <div class="card-header">
+          <h2 class="card-title">Jog & Origin</h2>
+          <div class="step-buttons">
+            <button class="btn-step active" data-step="1">1mm</button>
+            <button class="btn-step" data-step="10">10mm</button>
+            <button class="btn-step" data-step="50">50mm</button>
+          </div>
+        </div>
+        <div class="jog-pad-container">
+          <div class="jog-pad">
+            <button id="btnJogYPlus" class="btn-jog y-plus" title="Y+ (Back)">▲</button>
+            <button id="btnJogXMinus" class="btn-jog x-minus" title="X- (Left)">◀</button>
+            <button id="btnHome" class="btn-jog home-center" title="Home ($H)">⌂</button>
+            <button id="btnJogXPlus" class="btn-jog x-plus" title="X+ (Right)">▶</button>
+            <button id="btnJogYMinus" class="btn-jog y-minus" title="Y- (Front)">▼</button>
+          </div>
+        </div>
+        <div class="origin-actions">
+          <button id="btnGoToOrigin" class="btn-origin-primary full-width mb-2" title="Rapid move laser head directly to (0,0) and pulse aiming dot">
+            🎯 Move Laser to Origin (0, 0)
+          </button>
+          <div class="origin-btn-row">
+            <button id="btnHomeDetailed" class="btn-small flex-1" title="Physical limit switch homing ($H)">⌂ Home ($H)</button>
+            <button id="btnSetZero" class="btn-small flex-1" title="Set current position as Origin (G92)">📍 Set Zero (G92)</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- JOB EXECUTION & MONITOR -->
+      <section class="panel-card highlight-card">
+        <div class="card-header">
+          <h2 class="card-title">Live Job Monitor</h2>
+        </div>
+        
+        <div class="progress-section">
+          <div class="progress-bar-wrapper">
+            <div id="jobProgressBar" class="progress-bar-fill" style="width: 0%;"></div>
+          </div>
+          <div class="progress-stats">
+            <span id="jobProgressPct" class="progress-pct">0%</span>
+            <span id="jobEtaText" class="progress-eta">ETA: --:--</span>
+          </div>
+        </div>
+
+        <div class="job-meta-line">
+          <span id="jobLinesText" class="mono text-muted">Line: 0 / 0</span>
+          <span id="jobElapsedText" class="mono text-muted">Elapsed: 00:00</span>
+        </div>
+
+        <div class="execution-actions">
+          <button id="btnGenerateGcode" class="btn btn-secondary full-width mb-2">⚡ Generate Toolpath G-Code</button>
+          <div class="btn-stream-group">
+            <button id="btnStartJob" class="btn btn-start">▶ START ENGRAVE</button>
+            <button id="btnPauseJob" class="btn btn-pause" disabled>⏸ Pause</button>
+            <button id="btnStopJob" class="btn btn-abort" disabled>⏹ Abort</button>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <!-- LOG DRAWER -->
+  <footer class="app-footer">
+    <div class="footer-status">
+      <span id="footerConsoleMsg" class="mono text-muted">Falcon Studio ready. Machine standing by.</span>
+    </div>
+  </footer>
+
+  <script src="js/web_serial_controller.js"></script>
+  <script src="js/bed_scale_generator.js"></script>
+  <script src="js/svg_gcode_compiler.js"></script>
+  <script src="js/raster_compiler.js"></script>
+  <script src="js/bed_canvas.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
