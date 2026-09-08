@@ -18,6 +18,12 @@ class FalconApp {
     this.currentPresetId = null;
     this.selectedBedMaterial = 'glass';
     this.jogStep = 1.0;
+
+    // Undo / Redo History Stack
+    this.history = [];
+    this.historyIndex = -1;
+    this.isPerformingHistoryAction = false;
+    this.autoSaveTimeout = null;
     
     // Wire global callbacks for canvas drag, resize, and rotation
     window.onWorkpieceMoved = (x, y) => {
@@ -44,10 +50,16 @@ class FalconApp {
       return this.aspectRatio || (parseFloat(document.getElementById('inputWidth').value) / parseFloat(document.getElementById('inputHeight').value)) || 1.0;
     };
 
+    // Transform completion hook -> pushes to undo stack
+    window.onWorkpieceTransformEnd = (action) => {
+      this.saveState(action || 'Transform Artwork');
+    };
+
     this.initElements();
     this.initEvents();
     this.initWebSocket();
     this.refreshPorts();
+    this.restoreFromLocalStorage();
   }
 
   initElements() {
@@ -58,6 +70,14 @@ class FalconApp {
     this.btnConnect = document.getElementById('btnConnect');
     this.btnEmergencyStop = document.getElementById('btnEmergencyStop');
     this.statusBadge = document.getElementById('statusBadge');
+
+    // History & Canvas Item Toolbar buttons
+    this.btnUndo = document.getElementById('btnUndo');
+    this.btnRedo = document.getElementById('btnRedo');
+    this.btnAddCanvasItem = document.getElementById('btnAddCanvasItem');
+    this.btnDeleteCanvasItem = document.getElementById('btnDeleteCanvasItem');
+    this.btnDeleteWorkpiece = document.getElementById('btnDeleteWorkpiece');
+    this.autoSaveIndicator = document.getElementById('autoSaveIndicator');
     this.statusText = document.getElementById('statusText');
     this.hudCoords = document.getElementById('hudCoords');
     this.hudFeedPower = document.getElementById('hudFeedPower');
@@ -197,6 +217,42 @@ class FalconApp {
     this.btnGenerateBedScale.addEventListener('click', () => this.generateBedScale(false));
     this.btnEngraveBedScaleDirect.addEventListener('click', () => this.generateBedScale(true));
 
+    // Toolbar History & Canvas Item Actions
+    if (this.btnUndo) this.btnUndo.addEventListener('click', () => this.undo());
+    if (this.btnRedo) this.btnRedo.addEventListener('click', () => this.redo());
+    if (this.btnAddCanvasItem) this.btnAddCanvasItem.addEventListener('click', () => this.fileInput.click());
+    if (this.btnDeleteCanvasItem) this.btnDeleteCanvasItem.addEventListener('click', () => this.deleteWorkpiece());
+    if (this.btnDeleteWorkpiece) this.btnDeleteWorkpiece.addEventListener('click', () => this.deleteWorkpiece());
+
+    // Global Keyboard Shortcuts (Undo, Redo, Delete)
+    window.addEventListener('keydown', (e) => {
+      const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+      const isInput = activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select';
+
+      // Ctrl+Z / Cmd+Z -> Undo
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        if (!isInput) {
+          e.preventDefault();
+          this.undo();
+        }
+      }
+      // Ctrl+Y / Cmd+Y or Ctrl+Shift+Z -> Redo
+      else if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') ||
+               ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'z')) {
+        if (!isInput) {
+          e.preventDefault();
+          this.redo();
+        }
+      }
+      // Delete or Backspace -> Delete artwork from canvas
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && !isInput) {
+        if (this.visualizer && this.visualizer.workpiece.visible) {
+          e.preventDefault();
+          this.deleteWorkpiece();
+        }
+      }
+    });
+
     // Toolbar zoom
     document.getElementById('btnZoomIn').addEventListener('click', () => {
       this.visualizer.scale = Math.min(8.0, this.visualizer.scale * 1.2);
@@ -253,6 +309,14 @@ class FalconApp {
       this.visualizer.setWorkpiece(x, y, w, h, rot, this.visualizer.workpiece.visible);
     };
 
+    let inputDebounceTimer = null;
+    const triggerDebouncedStateSave = (label) => {
+      if (inputDebounceTimer) clearTimeout(inputDebounceTimer);
+      inputDebounceTimer = setTimeout(() => {
+        this.saveState(label);
+      }, 500);
+    };
+
     this.inputX.addEventListener('input', onTransformChange);
     this.inputY.addEventListener('input', onTransformChange);
     this.inputWidth.addEventListener('input', () => {
@@ -268,11 +332,17 @@ class FalconApp {
       onTransformChange();
     });
 
+    this.inputX.addEventListener('change', () => triggerDebouncedStateSave('Move Artwork (X)'));
+    this.inputY.addEventListener('change', () => triggerDebouncedStateSave('Move Artwork (Y)'));
+    this.inputWidth.addEventListener('change', () => triggerDebouncedStateSave('Resize Width'));
+    this.inputHeight.addEventListener('change', () => triggerDebouncedStateSave('Resize Height'));
+
     if (this.inputRotation) {
       this.inputRotation.addEventListener('input', () => {
         const deg = parseFloat(this.inputRotation.value) || 0;
         this.visualizer.setRotation(deg);
       });
+      this.inputRotation.addEventListener('change', () => triggerDebouncedStateSave('Rotate Angle'));
     }
 
     if (this.btnResetRotation) {
@@ -280,6 +350,7 @@ class FalconApp {
         if (this.inputRotation) this.inputRotation.value = "0.0";
         this.visualizer.setRotation(0);
         this.log('Workpiece rotation reset to 0°.');
+        this.saveState('Reset Rotation (0°)');
       });
     }
 
@@ -291,7 +362,45 @@ class FalconApp {
       this.inputX.value = "200.0";
       this.inputY.value = "207.5";
       onTransformChange();
+      this.saveState('Center on Bed');
     });
+
+    const btnBatch2x2 = document.getElementById('btnBatch2x2');
+    if (btnBatch2x2) {
+      btnBatch2x2.addEventListener('click', () => {
+        if (!this.currentPaths || this.currentPaths.length === 0) {
+          alert('Please load an artwork or preset first before creating a 2×2 batch.');
+          return;
+        }
+        const w = parseFloat(this.inputWidth.value) || 40;
+        const h = parseFloat(this.inputHeight.value) || 40;
+        const batched = [];
+        const scale = 0.45;
+        const offsets = [[0, 0], [0.55, 0], [0, 0.55], [0.55, 0.55]];
+        for (const [ox, oy] of offsets) {
+          for (const poly of this.currentPaths) {
+            const shifted = poly.map(pt => [pt[0] * scale + ox, pt[1] * scale + oy]);
+            batched.push(shifted);
+          }
+        }
+        this.currentPaths = batched;
+        const newW = (w * 2).toFixed(1);
+        const newH = (h * 2).toFixed(1);
+        this.inputWidth.value = newW;
+        this.inputHeight.value = newH;
+        this.visualizer.setWorkpiece(
+          parseFloat(this.inputX.value),
+          parseFloat(this.inputY.value),
+          parseFloat(newW),
+          parseFloat(newH),
+          0,
+          true
+        );
+        this.visualizer.setToolpaths(this.currentPaths, true);
+        this.log('Arranged 2×2 batch grid (4 items) on bed.');
+        this.saveState('2×2 Batch Grid');
+      });
+    }
 
     // Transforms: Flip, Rotate, Quick Scale
     this.btnFlipH.addEventListener('click', () => this.flipHorizontal());
@@ -758,6 +867,8 @@ class FalconApp {
 
         this.switchTab('bedMap');
         this.log(`Bed Scale ready: ${data.line_count} lines on ${data.material_name}. ${data.safety_note}`);
+        this.saveState(`Generate Bed Scale (${data.size_mm}mm)`);
+        this.queueAutoSave();
 
         if (directStart) {
           if (material === 'glass') {
@@ -897,6 +1008,7 @@ class FalconApp {
         this.visualizer.setToolpaths(this.currentPaths, true);
         this.switchTab('bedMap');
         this.log(`SVG loaded: ${data.path_count} vector paths extracted!`);
+        this.saveState(`Load SVG (${this.currentFile ? this.currentFile.name : 'Vector Artwork'})`);
       }
     } catch (e) {
       this.log(`Error parsing SVG: ${e.message}`);
@@ -917,14 +1029,41 @@ class FalconApp {
         smoothing: parseFloat(this.sliderSmoothing.value)
       };
 
-      const res = await fetch('/api/process_photo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
+      let data = null;
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isLocalhost) {
+        try {
+          const res = await fetch('/api/process_photo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+            const ct = res.headers.get('content-type') || '';
+            if (ct.includes('application/json')) {
+              data = await res.json();
+            }
+          }
+        } catch (e) {
+          // Local bridge error
+        }
+      }
+
+      // Standalone browser client fallback
+      if (!data || !data.preview) {
+        if (typeof ClientPhotoTracer !== 'undefined') {
+          data = await ClientPhotoTracer.processImage(this.fileBase64, {
+            mode: payload.mode,
+            invert: payload.invert,
+            remove_bg: payload.remove_bg,
+            detail_level: payload.detail_level,
+            line_thickness: payload.line_thickness,
+            smoothing: payload.smoothing
+          });
+        }
+      }
       
-      if (data.preview) {
+      if (data && data.preview) {
         this.imgProcessedPreview.src = data.preview;
         this.imgProcessedPreview.classList.remove('hidden');
         this.placeholderProcessed.classList.add('hidden');
@@ -934,9 +1073,21 @@ class FalconApp {
         this.currentPaths = data.paths;
         this.aspectRatio = data.aspect_ratio || 1.0;
         
-        // Update visualizer toolpaths
-        this.visualizer.setToolpaths(this.currentPaths);
+        // Ensure workpiece is active and visible on bed
+        const w = parseFloat(this.inputWidth.value) || 40;
+        this.inputHeight.value = (w / this.aspectRatio).toFixed(1);
+        const rot = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0;
+        this.visualizer.setWorkpiece(
+          parseFloat(this.inputX.value),
+          parseFloat(this.inputY.value),
+          w,
+          parseFloat(this.inputHeight.value),
+          rot,
+          true
+        );
+        this.visualizer.setToolpaths(this.currentPaths, true);
         this.log(`Converted to line art: ${data.path_count} paths generated.`);
+        this.saveState(`Convert Photo (${this.filterAlgorithm.value})`);
       }
     } catch (e) {
       this.log(`Error processing photo: ${e.message}`);
@@ -955,21 +1106,50 @@ class FalconApp {
         brightness: parseInt(this.sliderBrightness.value)
       };
 
-      const res = await fetch('/api/preview_raster', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
+      let data = null;
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isLocalhost) {
+        try {
+          const res = await fetch('/api/preview_raster', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+            const ct = res.headers.get('content-type') || '';
+            if (ct.includes('application/json')) {
+              data = await res.json();
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (!data || !data.preview) {
+        if (typeof ClientRasterCompiler !== 'undefined' && ClientRasterCompiler.generatePreview) {
+          data = await ClientRasterCompiler.generatePreview(this.fileBase64, payload);
+        }
+      }
       
-      if (data.preview) {
+      if (data && data.preview) {
         this.imgProcessedPreview.src = data.preview;
         this.imgProcessedPreview.classList.remove('hidden');
         this.placeholderProcessed.classList.add('hidden');
         this.pathCountTag.textContent = `${data.width}×${data.height} px`;
         this.pathCountTag.classList.remove('hidden');
         this.aspectRatio = data.aspect_ratio || 1.0;
+        const w = parseFloat(this.inputWidth.value) || 40;
+        this.inputHeight.value = (w / this.aspectRatio).toFixed(1);
+        const rot = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0;
+        this.visualizer.setWorkpiece(
+          parseFloat(this.inputX.value),
+          parseFloat(this.inputY.value),
+          w,
+          parseFloat(this.inputHeight.value),
+          rot,
+          true
+        );
         this.log('Raster dither preview updated.');
+        this.saveState(`Raster Dither (${this.rasterDitherMode.value})`);
       }
     } catch (e) {
       this.log(`Error generating raster preview: ${e.message}`);
@@ -1084,6 +1264,7 @@ class FalconApp {
       true
     );
     this.switchTab('bedMap');
+    this.saveState(`Load Preset (${presetId})`);
   }
 
   async generateGcode() {
@@ -1144,6 +1325,28 @@ class FalconApp {
             speed_mm_min: payload.speed,
             power_s: payload.power,
             passes: payload.passes
+          });
+          data = { success: true, line_count: lines.length, snippet: lines.slice(0, 25) };
+          this.currentActiveGcode = lines;
+        } else {
+          // Client raster dither G-code compilation
+          const dither = ClientRasterCompiler.ditherImage(
+            this.imgOriginalPreview,
+            payload.dither_mode,
+            payload.invert,
+            parseFloat(this.sliderContrast.value),
+            parseInt(this.sliderBrightness.value)
+          );
+          const lines = ClientRasterCompiler.generateRasterGcode({
+            binary: dither.binary,
+            width: dither.width,
+            height: dither.height,
+            x_start: payload.x,
+            y_start: payload.y,
+            target_width_mm: payload.width,
+            target_height_mm: payload.height,
+            speed_mm_min: payload.speed,
+            max_power_s: payload.power
           });
           data = { success: true, line_count: lines.length, snippet: lines.slice(0, 25) };
           this.currentActiveGcode = lines;
@@ -1220,10 +1423,14 @@ class FalconApp {
       parseFloat(this.inputX.value),
       parseFloat(this.inputY.value),
       newW,
-      newH
+      newH,
+      this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0,
+      this.visualizer.workpiece.visible
     );
     const sign = factor >= 1.0 ? '+' : '';
-    this.log(`Scaled workpiece by ${sign}${Math.round((factor - 1.0) * 100)}% to ${newW} × ${newH} mm.`);
+    const pct = Math.round((factor - 1.0) * 100);
+    this.log(`Scaled workpiece by ${sign}${pct}% to ${newW} × ${newH} mm.`);
+    this.saveState(`Scale Artwork (${sign}${pct}%)`);
   }
 
   transformImage(transformFn) {
@@ -1251,7 +1458,7 @@ class FalconApp {
           pt[0] = Math.round((1.0 - pt[0]) * 10000) / 10000;
         }
       }
-      this.visualizer.setToolpaths(this.currentPaths);
+      this.visualizer.setToolpaths(this.currentPaths, this.visualizer.workpiece.visible);
     }
     if (this.fileBase64) {
       this.transformImage((canvas, ctx, img) => {
@@ -1263,6 +1470,7 @@ class FalconApp {
       });
     }
     this.log('Workpiece flipped horizontally (Mirror X).');
+    this.saveState('Flip Horizontal');
   }
 
   flipVertical() {
@@ -1272,7 +1480,7 @@ class FalconApp {
           pt[1] = Math.round((1.0 - pt[1]) * 10000) / 10000;
         }
       }
-      this.visualizer.setToolpaths(this.currentPaths);
+      this.visualizer.setToolpaths(this.currentPaths, this.visualizer.workpiece.visible);
     }
     if (this.fileBase64) {
       this.transformImage((canvas, ctx, img) => {
@@ -1284,6 +1492,7 @@ class FalconApp {
       });
     }
     this.log('Workpiece flipped vertically (Mirror Y).');
+    this.saveState('Flip Vertical');
   }
 
   rotateCW() {
@@ -1292,6 +1501,7 @@ class FalconApp {
     if (this.inputRotation) this.inputRotation.value = cur.toFixed(1);
     this.visualizer.setRotation(cur);
     this.log(`Workpiece rotated to ${cur.toFixed(1)}° (+90° CW).`);
+    this.saveState(`Rotate CW (${cur.toFixed(1)}°)`);
   }
 
   rotateCCW() {
@@ -1300,6 +1510,285 @@ class FalconApp {
     if (this.inputRotation) this.inputRotation.value = cur.toFixed(1);
     this.visualizer.setRotation(cur);
     this.log(`Workpiece rotated to ${cur.toFixed(1)}° (-90° CCW).`);
+    this.saveState(`Rotate CCW (${cur.toFixed(1)}°)`);
+  }
+
+  // ==========================================
+  // UNDO / REDO HISTORY SYSTEM
+  // ==========================================
+  saveState(description = 'Edit Artwork') {
+    if (this.isPerformingHistoryAction) return;
+    if (!this.visualizer) return;
+
+    const snapshot = {
+      description,
+      timestamp: Date.now(),
+      workpiece: {
+        x: this.visualizer.workpiece.x,
+        y: this.visualizer.workpiece.y,
+        width: this.visualizer.workpiece.width,
+        height: this.visualizer.workpiece.height,
+        rotation: this.visualizer.workpiece.rotation,
+        visible: this.visualizer.workpiece.visible
+      },
+      currentPaths: this.currentPaths ? JSON.parse(JSON.stringify(this.currentPaths)) : [],
+      fileBase64: (this.fileBase64 && this.fileBase64.length < 1500000) ? this.fileBase64 : null,
+      svgXml: (this.svgXml && this.svgXml.length < 1000000) ? this.svgXml : null,
+      fileName: this.currentFile ? this.currentFile.name : (this.currentPresetId || null),
+      currentMode: this.currentMode,
+      speed: this.inputSpeed ? this.inputSpeed.value : '1200',
+      power: this.inputPower ? this.inputPower.value : '350',
+      passes: this.inputPasses ? this.inputPasses.value : '1'
+    };
+
+    // If we've undone steps and then make a new edit, truncate forward history
+    if (this.historyIndex < this.history.length - 1) {
+      this.history = this.history.slice(0, this.historyIndex + 1);
+    }
+
+    // Limit stack depth to 50
+    if (this.history.length >= 50) {
+      this.history.shift();
+    }
+
+    this.history.push(snapshot);
+    this.historyIndex = this.history.length - 1;
+    this.updateHistoryButtons();
+    this.queueAutoSave();
+  }
+
+  undo() {
+    if (this.historyIndex > 0) {
+      this.historyIndex--;
+      const st = this.history[this.historyIndex];
+      this.restoreState(st);
+      this.log(`↶ Undo: ${st.description}`);
+      this.updateHistoryButtons();
+      this.queueAutoSave();
+    }
+  }
+
+  redo() {
+    if (this.historyIndex < this.history.length - 1) {
+      this.historyIndex++;
+      const st = this.history[this.historyIndex];
+      this.restoreState(st);
+      this.log(`↷ Redo: ${st.description}`);
+      this.updateHistoryButtons();
+      this.queueAutoSave();
+    }
+  }
+
+  restoreState(st) {
+    if (!st || !st.workpiece) return;
+    this.isPerformingHistoryAction = true;
+    try {
+      // 1. Restore workpiece visualizer
+      this.visualizer.setWorkpiece(
+        st.workpiece.x,
+        st.workpiece.y,
+        st.workpiece.width,
+        st.workpiece.height,
+        st.workpiece.rotation,
+        st.workpiece.visible
+      );
+
+      // 2. Restore placement inputs
+      this.inputX.value = st.workpiece.x.toFixed(1);
+      this.inputY.value = st.workpiece.y.toFixed(1);
+      this.inputWidth.value = st.workpiece.width.toFixed(1);
+      this.inputHeight.value = st.workpiece.height.toFixed(1);
+      if (this.inputRotation) {
+        this.inputRotation.value = (st.workpiece.rotation || 0).toFixed(1);
+      }
+      if (st.speed && this.inputSpeed) this.inputSpeed.value = st.speed;
+      if (st.power && this.inputPower) this.inputPower.value = st.power;
+      if (st.passes && this.inputPasses) this.inputPasses.value = st.passes;
+
+      // 3. Restore toolpaths
+      this.currentPaths = st.currentPaths ? JSON.parse(JSON.stringify(st.currentPaths)) : [];
+      this.visualizer.setToolpaths(this.currentPaths, st.workpiece.visible);
+
+      // 4. Restore file and images
+      this.fileBase64 = st.fileBase64;
+      this.svgXml = st.svgXml;
+
+      if (st.fileName && st.workpiece.visible) {
+        this.loadedFileName.textContent = st.fileName;
+        this.fileLoadedInfo.classList.remove('hidden');
+      } else if (!st.workpiece.visible) {
+        this.fileLoadedInfo.classList.add('hidden');
+      }
+
+      if (st.fileBase64) {
+        this.imgOriginalPreview.src = st.fileBase64;
+        this.imgOriginalPreview.classList.remove('hidden');
+        this.placeholderOriginal.classList.add('hidden');
+      } else if (!st.workpiece.visible) {
+        this.imgOriginalPreview.src = '';
+        this.imgOriginalPreview.classList.add('hidden');
+        this.placeholderOriginal.classList.remove('hidden');
+      }
+
+      if (st.currentMode && st.currentMode !== this.currentMode) {
+        this.setMode(st.currentMode);
+      }
+    } finally {
+      this.isPerformingHistoryAction = false;
+    }
+  }
+
+  updateHistoryButtons() {
+    if (this.btnUndo) this.btnUndo.disabled = (this.historyIndex <= 0);
+    if (this.btnRedo) this.btnRedo.disabled = (this.historyIndex >= this.history.length - 1);
+  }
+
+  // ==========================================
+  // ADD & DELETE CANVAS ITEM
+  // ==========================================
+  deleteWorkpiece() {
+    if (!this.visualizer.workpiece.visible && !this.currentFile && (!this.currentPaths || this.currentPaths.length === 0)) {
+      this.log('Canvas is already empty.');
+      return;
+    }
+    this.clearFile();
+    this.visualizer.setWorkpiece(200.0, 207.5, 40.0, 40.0, 0.0, false);
+    this.visualizer.setToolpaths([]);
+    this.currentActiveGcode = null;
+    if (this.inputRotation) this.inputRotation.value = "0.0";
+    this.saveState('Delete Canvas Item');
+    this.queueAutoSave();
+    this.log('Artwork removed from canvas. Bed is now empty.');
+  }
+
+  // ==========================================
+  // LOCAL STORAGE PERSISTENCE (AUTOSAVE)
+  // ==========================================
+  queueAutoSave() {
+    if (this.autoSaveTimeout) clearTimeout(this.autoSaveTimeout);
+    if (this.autoSaveIndicator) {
+      this.autoSaveIndicator.textContent = '💾 Saving...';
+      this.autoSaveIndicator.style.color = '#ffb300';
+    }
+    this.autoSaveTimeout = setTimeout(() => {
+      this.saveToLocalStorage();
+    }, 600);
+  }
+
+  saveToLocalStorage() {
+    try {
+      if (!this.visualizer) return;
+      const state = {
+        version: 1,
+        savedAt: Date.now(),
+        workpiece: {
+          x: this.visualizer.workpiece.x,
+          y: this.visualizer.workpiece.y,
+          width: this.visualizer.workpiece.width,
+          height: this.visualizer.workpiece.height,
+          rotation: this.visualizer.workpiece.rotation,
+          visible: this.visualizer.workpiece.visible
+        },
+        currentPaths: (this.currentPaths && this.currentPaths.length < 5000) ? this.currentPaths : [],
+        currentMode: this.currentMode,
+        fileName: this.currentFile ? this.currentFile.name : (this.currentPresetId || null),
+        fileBase64: (this.fileBase64 && this.fileBase64.length < 1000000) ? this.fileBase64 : null,
+        svgXml: (this.svgXml && this.svgXml.length < 500000) ? this.svgXml : null,
+        speed: this.inputSpeed ? this.inputSpeed.value : '1200',
+        power: this.inputPower ? this.inputPower.value : '350',
+        passes: this.inputPasses ? this.inputPasses.value : '1',
+        lockAspect: this.checkLockAspect ? this.checkLockAspect.checked : true,
+        detail: this.sliderDetail ? this.sliderDetail.value : '50',
+        thickness: this.sliderThickness ? this.sliderThickness.value : '1',
+        smoothing: this.sliderSmoothing ? this.sliderSmoothing.value : '1.0',
+        contrast: this.sliderContrast ? this.sliderContrast.value : '1.0',
+        brightness: this.sliderBrightness ? this.sliderBrightness.value : '0',
+        interval: this.sliderInterval ? this.sliderInterval.value : '0.1'
+      };
+
+      localStorage.setItem('falcon_studio_state', JSON.stringify(state));
+      if (this.autoSaveIndicator) {
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        this.autoSaveIndicator.textContent = `💾 Autosaved (${timeStr})`;
+        this.autoSaveIndicator.style.color = '#00e5ff';
+      }
+    } catch (err) {
+      console.warn('[Falcon Studio] Autosave to localStorage failed:', err);
+      if (this.autoSaveIndicator) {
+        this.autoSaveIndicator.textContent = '💾 Autosave Full';
+        this.autoSaveIndicator.style.color = '#ff5252';
+      }
+    }
+  }
+
+  restoreFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem('falcon_studio_state');
+      if (!raw) {
+        this.saveState('Initial Clean Bed');
+        return;
+      }
+      const st = JSON.parse(raw);
+      if (!st || !st.workpiece) {
+        this.saveState('Initial Clean Bed');
+        return;
+      }
+
+      this.isPerformingHistoryAction = true;
+      try {
+        if (st.workpiece.visible) {
+          this.visualizer.setWorkpiece(
+            st.workpiece.x,
+            st.workpiece.y,
+            st.workpiece.width,
+            st.workpiece.height,
+            st.workpiece.rotation || 0,
+            true
+          );
+          this.inputX.value = st.workpiece.x.toFixed(1);
+          this.inputY.value = st.workpiece.y.toFixed(1);
+          this.inputWidth.value = st.workpiece.width.toFixed(1);
+          this.inputHeight.value = st.workpiece.height.toFixed(1);
+          if (this.inputRotation) this.inputRotation.value = (st.workpiece.rotation || 0).toFixed(1);
+
+          if (st.currentPaths && st.currentPaths.length > 0) {
+            this.currentPaths = st.currentPaths;
+            this.visualizer.setToolpaths(this.currentPaths, true);
+          }
+          if (st.fileName) {
+            this.loadedFileName.textContent = st.fileName;
+            this.fileLoadedInfo.classList.remove('hidden');
+          }
+          if (st.fileBase64) {
+            this.fileBase64 = st.fileBase64;
+            this.imgOriginalPreview.src = st.fileBase64;
+            this.imgOriginalPreview.classList.remove('hidden');
+            this.placeholderOriginal.classList.add('hidden');
+          }
+          if (st.svgXml) this.svgXml = st.svgXml;
+          this.log(`Restored previous canvas session from local storage (${st.fileName || 'Artwork'}).`);
+        } else {
+          this.visualizer.setWorkpiece(200, 207.5, 40, 40, 0, false);
+          this.visualizer.setToolpaths([]);
+        }
+
+        if (st.speed && this.inputSpeed) this.inputSpeed.value = st.speed;
+        if (st.power && this.inputPower) this.inputPower.value = st.power;
+        if (st.passes && this.inputPasses) this.inputPasses.value = st.passes;
+        if (st.lockAspect !== undefined && this.checkLockAspect) this.checkLockAspect.checked = st.lockAspect;
+        if (st.currentMode) this.setMode(st.currentMode);
+      } finally {
+        this.isPerformingHistoryAction = false;
+      }
+
+      this.saveState(st.workpiece.visible ? 'Restored Workspace' : 'Initial Clean Bed');
+      if (this.autoSaveIndicator) {
+        this.autoSaveIndicator.textContent = '💾 Session Restored';
+      }
+    } catch (e) {
+      console.warn('[Falcon Studio] Could not restore from localStorage:', e);
+      this.saveState('Initial Clean Bed');
+    }
   }
 
   log(msg) {

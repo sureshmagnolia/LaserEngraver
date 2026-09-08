@@ -425,11 +425,21 @@ class BedVisualizer {
     });
 
     window.addEventListener('mouseup', () => {
+      const wasTransforming = this.workpiece.isDragging || this.workpiece.isResizing || this.workpiece.isRotating;
+      let actionName = 'Transform Artwork';
+      if (this.workpiece.isRotating) actionName = `Rotate Artwork (${this.workpiece.rotation.toFixed(1)}°)`;
+      else if (this.workpiece.isResizing) actionName = `Resize Artwork (${this.workpiece.width.toFixed(1)}×${this.workpiece.height.toFixed(1)} mm)`;
+      else if (this.workpiece.isDragging) actionName = `Move Artwork (${this.workpiece.x.toFixed(1)}, ${this.workpiece.y.toFixed(1)})`;
+
       this.workpiece.isDragging = false;
       this.workpiece.isResizing = false;
       this.workpiece.isRotating = false;
       this.isPanning = false;
       this.render();
+
+      if (wasTransforming && window.onWorkpieceTransformEnd) {
+        window.onWorkpieceTransformEnd(actionName);
+      }
     });
 
     this.canvas.addEventListener('wheel', (e) => {

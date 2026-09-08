@@ -83,6 +83,30 @@ class ClientRasterCompiler {
     };
   }
 
+  static async generatePreview(imageSource, options = {}) {
+    const { mode = 'floyd', invert = false, contrast = 1.0, brightness = 0 } = options;
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        try {
+          const res = ClientRasterCompiler.ditherImage(img, mode, invert, contrast, brightness);
+          resolve({
+            success: true,
+            preview: res.dataUrl,
+            width: res.width,
+            height: res.height,
+            aspect_ratio: Math.round((res.width / Math.max(1, res.height)) * 100) / 100
+          });
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to load image for raster dithering.'));
+      img.src = typeof imageSource === 'string' ? imageSource : URL.createObjectURL(imageSource);
+    });
+  }
+
   static generateRasterGcode({
     binary,
     width,
