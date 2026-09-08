@@ -18,6 +18,9 @@ class FalconApp {
     this.currentPresetId = null;
     this.selectedBedMaterial = 'glass';
     this.jogStep = 1.0;
+    this.engraveAlignmentMode = 'bedScale'; // 'bedScale' or 'aimingDot'
+    this.selectedAnchor = 'center'; // 'center', 'top-left', 'top-center', 'top-right', 'mid-left', 'mid-right', 'bottom-left', 'bottom-center', 'bottom-right'
+    this.isAimingDotActive = false;
 
     // Undo / Redo History Stack
     this.history = [];
@@ -81,6 +84,19 @@ class FalconApp {
     this.statusText = document.getElementById('statusText');
     this.hudCoords = document.getElementById('hudCoords');
     this.hudFeedPower = document.getElementById('hudFeedPower');
+
+    // Engraving Alignment Mode & Aiming Dot elements
+    this.btnModeBedScale = document.getElementById('btnModeBedScale');
+    this.btnModeAimingDot = document.getElementById('btnModeAimingDot');
+    this.modeBedScaleInfo = document.getElementById('modeBedScaleInfo');
+    this.modeAimingDotControls = document.getElementById('modeAimingDotControls');
+    this.btnAimingDotToggle = document.getElementById('btnAimingDotToggle');
+    this.laserDotStatusText = document.getElementById('laserDotStatusText');
+    this.selectedAnchorLabel = document.getElementById('selectedAnchorLabel');
+    this.anchorButtons = document.querySelectorAll('.btn-anchor');
+    this.btnSnapToAimingDot = document.getElementById('btnSnapToAimingDot');
+    this.btnTraceMaterialFrame = document.getElementById('btnTraceMaterialFrame');
+    this.btnSetDotOriginG92 = document.getElementById('btnSetDotOriginG92');
 
     // Web Serial Controller
     this.serialController = new WebSerialController();
@@ -223,6 +239,34 @@ class FalconApp {
     if (this.btnAddCanvasItem) this.btnAddCanvasItem.addEventListener('click', () => this.fileInput.click());
     if (this.btnDeleteCanvasItem) this.btnDeleteCanvasItem.addEventListener('click', () => this.deleteWorkpiece());
     if (this.btnDeleteWorkpiece) this.btnDeleteWorkpiece.addEventListener('click', () => this.deleteWorkpiece());
+
+    // Engraving Alignment Modes & Aiming Dot Actions
+    if (this.btnModeBedScale) {
+      this.btnModeBedScale.addEventListener('click', () => this.setEngraveAlignmentMode('bedScale'));
+    }
+    if (this.btnModeAimingDot) {
+      this.btnModeAimingDot.addEventListener('click', () => this.setEngraveAlignmentMode('aimingDot'));
+    }
+    if (this.btnAimingDotToggle) {
+      this.btnAimingDotToggle.addEventListener('click', () => this.toggleLaserDot());
+    }
+    if (this.anchorButtons && this.anchorButtons.length > 0) {
+      this.anchorButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const anchor = btn.getAttribute('data-anchor');
+          this.setMaterialAnchor(anchor);
+        });
+      });
+    }
+    if (this.btnSnapToAimingDot) {
+      this.btnSnapToAimingDot.addEventListener('click', () => this.snapWorkpieceToAimingDot());
+    }
+    if (this.btnTraceMaterialFrame) {
+      this.btnTraceMaterialFrame.addEventListener('click', () => this.traceFrame());
+    }
+    if (this.btnSetDotOriginG92) {
+      this.btnSetDotOriginG92.addEventListener('click', () => this.setDotOriginG92());
+    }
 
     // Global Keyboard Shortcuts (Undo, Redo, Delete)
     window.addEventListener('keydown', (e) => {
@@ -885,20 +929,176 @@ class FalconApp {
     }
   }
 
-  async toggleLaserDot() {
-    const res = await fetch('/api/laser_dot', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ power: 5 })
-    });
-    const data = await res.json();
-    if (data.laser_dot_on) {
-      this.btnToggleLaserDot.style.background = 'rgba(0, 229, 255, 0.3)';
-      this.log('Laser aiming dot ON (0.5% power)');
+  setEngraveAlignmentMode(mode) {
+    this.engraveAlignmentMode = mode;
+
+    if (mode === 'bedScale') {
+      if (this.btnModeBedScale) this.btnModeBedScale.classList.add('active');
+      if (this.btnModeAimingDot) this.btnModeAimingDot.classList.remove('active');
+      if (this.modeBedScaleInfo) this.modeBedScaleInfo.classList.remove('hidden');
+      if (this.modeAimingDotControls) this.modeAimingDotControls.classList.add('hidden');
+      if (this.visualizer) this.visualizer.setEngraveAlignmentMode('bedScale', this.selectedAnchor);
+      this.log('Engrave Mode: Bed Scale (Absolute 400×415 mm machine coordinates).');
     } else {
-      this.btnToggleLaserDot.style.background = '';
-      this.log('Laser aiming dot OFF');
+      if (this.btnModeAimingDot) this.btnModeAimingDot.classList.add('active');
+      if (this.btnModeBedScale) this.btnModeBedScale.classList.remove('active');
+      if (this.modeBedScaleInfo) this.modeBedScaleInfo.classList.add('hidden');
+      if (this.modeAimingDotControls) this.modeAimingDotControls.classList.remove('hidden');
+      if (this.visualizer) this.visualizer.setEngraveAlignmentMode('aimingDot', this.selectedAnchor);
+      this.log('Engrave Mode: Aiming Dot Alignment (Place material under laser beam & choose anchor).');
+      if (!this.isAimingDotActive) {
+        this.toggleLaserDot(true);
+      }
     }
+
+    this.saveState(`Switch Engrave Mode (${mode === 'bedScale' ? 'Bed Scale' : 'Aiming Dot'})`);
+    this.queueAutoSave();
+  }
+
+  setMaterialAnchor(anchor) {
+    this.selectedAnchor = anchor;
+    if (this.anchorButtons && this.anchorButtons.length > 0) {
+      this.anchorButtons.forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-anchor') === anchor);
+      });
+    }
+
+    if (this.selectedAnchorLabel) {
+      this.selectedAnchorLabel.textContent = this.getAnchorFriendlyName(anchor);
+    }
+
+    if (this.visualizer) {
+      this.visualizer.setMaterialAnchor(anchor);
+    }
+
+    this.log(`Aiming Dot anchor set to: ${this.getAnchorFriendlyName(anchor)}.`);
+    this.saveState(`Set Anchor (${anchor})`);
+    this.queueAutoSave();
+  }
+
+  getAnchorFriendlyName(anchor) {
+    const names = {
+      'center': 'Center',
+      'top-left': 'Top-Left Corner',
+      'top-center': 'Top-Center',
+      'top-right': 'Top-Right Corner',
+      'mid-left': 'Middle-Left',
+      'mid-right': 'Middle-Right',
+      'bottom-left': 'Bottom-Left (Origin 0,0)',
+      'bottom-center': 'Bottom-Center',
+      'bottom-right': 'Bottom-Right Corner'
+    };
+    return names[anchor] || 'Center';
+  }
+
+  snapWorkpieceToAimingDot() {
+    if (!this.visualizer) return;
+    const lx = this.visualizer.laserPos.x;
+    const ly = this.visualizer.laserPos.y;
+    const w = parseFloat(this.inputWidth.value) || 40.0;
+    const h = parseFloat(this.inputHeight.value) || 40.0;
+    const rotDeg = this.visualizer.workpiece.rotation || 0.0;
+    const rad = (rotDeg * Math.PI) / 180;
+
+    // Anchor local offset from center (Machine coords: Y is positive up, X is positive right)
+    let ax = 0, ay = 0;
+    const a = this.selectedAnchor || 'center';
+    if (a === 'top-left') { ax = -w / 2; ay = h / 2; }
+    else if (a === 'top-center') { ax = 0; ay = h / 2; }
+    else if (a === 'top-right') { ax = w / 2; ay = h / 2; }
+    else if (a === 'mid-left') { ax = -w / 2; ay = 0; }
+    else if (a === 'mid-right') { ax = w / 2; ay = 0; }
+    else if (a === 'bottom-left') { ax = -w / 2; ay = -h / 2; }
+    else if (a === 'bottom-center') { ax = 0; ay = -h / 2; }
+    else if (a === 'bottom-right') { ax = w / 2; ay = -h / 2; }
+    else { ax = 0; ay = 0; } // center
+
+    // Rotated anchor offset
+    const deltaX = ax * Math.cos(rad) - ay * Math.sin(rad);
+    const deltaY = ax * Math.sin(rad) + ay * Math.cos(rad);
+
+    // Target workpiece center
+    const newCx = Math.round((lx - deltaX) * 10) / 10;
+    const newCy = Math.round((ly - deltaY) * 10) / 10;
+
+    this.inputX.value = newCx.toFixed(1);
+    this.inputY.value = newCy.toFixed(1);
+
+    this.visualizer.setWorkpiece(newCx, newCy, w, h, rotDeg, true);
+    this.log(`Snapped workpiece [${this.getAnchorFriendlyName(a)}] to Aiming Dot at (${lx.toFixed(1)}, ${ly.toFixed(1)}) mm.`);
+    this.saveState(`Snap to Aiming Dot (${a})`);
+    this.queueAutoSave();
+  }
+
+  async toggleLaserDot(requestedState = null) {
+    if (requestedState !== null) {
+      this.isAimingDotActive = requestedState;
+    } else {
+      this.isAimingDotActive = !this.isAimingDotActive;
+    }
+
+    const pwr = this.isAimingDotActive ? 5 : 0; // 0.5% power (S5)
+
+    // 1. Web Serial USB
+    if (this.serialController && this.serialController.isConnected) {
+      try {
+        await this.serialController.toggleLaserDot(pwr);
+      } catch (err) {
+        this.log(`Web Serial laser dot error: ${err.message}`);
+      }
+    } else {
+      // 2. Local Bridge
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isLocalhost) {
+        try {
+          await fetch('/api/laser_dot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ power: pwr })
+          });
+        } catch (e) {}
+      }
+    }
+
+    // 3. Update Visualizer and UI
+    if (this.visualizer) {
+      this.visualizer.setAimingDot(this.isAimingDotActive);
+    }
+
+    // Sync button in Laser Parameters card
+    if (this.btnToggleLaserDot) {
+      if (this.isAimingDotActive) {
+        this.btnToggleLaserDot.classList.add('active');
+        this.btnToggleLaserDot.style.background = 'rgba(255, 23, 68, 0.25)';
+        this.btnToggleLaserDot.style.borderColor = '#ff1744';
+      } else {
+        this.btnToggleLaserDot.classList.remove('active');
+        this.btnToggleLaserDot.style.background = '';
+        this.btnToggleLaserDot.style.borderColor = '';
+      }
+    }
+
+    // Sync button in Aiming Dot Alignment card
+    if (this.btnAimingDotToggle) {
+      if (this.isAimingDotActive) {
+        this.btnAimingDotToggle.classList.add('active');
+        this.btnAimingDotToggle.innerHTML = '<span class="dot-indicator"></span> Turn OFF Dot';
+      } else {
+        this.btnAimingDotToggle.classList.remove('active');
+        this.btnAimingDotToggle.innerHTML = '<span class="dot-indicator"></span> Turn ON Dot';
+      }
+    }
+
+    if (this.laserDotStatusText) {
+      this.laserDotStatusText.textContent = this.isAimingDotActive 
+        ? '🔴 Dot is ON (0.5% power diode active)' 
+        : '⚪ Dot is currently OFF';
+      this.laserDotStatusText.style.color = this.isAimingDotActive ? '#ff5252' : '#888';
+    }
+
+    this.log(this.isAimingDotActive 
+      ? 'Laser Aiming Dot turned ON (0.5% power). Place your material under the beam.' 
+      : 'Laser Aiming Dot turned OFF.');
   }
 
   async traceFrame() {
@@ -906,17 +1106,49 @@ class FalconApp {
     const y = parseFloat(this.inputY.value);
     const w = parseFloat(this.inputWidth.value);
     const h = parseFloat(this.inputHeight.value);
-    const xmin = x - w / 2;
-    const ymin = y - h / 2;
-    const xmax = x + w / 2;
-    const ymax = y + h / 2;
+    const xmin = Math.max(0, x - w / 2);
+    const ymin = Math.max(0, y - h / 2);
+    const xmax = Math.min(400, x + w / 2);
+    const ymax = Math.min(415, y + h / 2);
     
-    this.log(`Tracing optical frame around (${xmin.toFixed(1)}, ${ymin.toFixed(1)}) to (${xmax.toFixed(1)}, ${ymax.toFixed(1)})...`);
-    await fetch('/api/trace_frame', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ xmin, ymin, xmax, ymax, speed: 1500 })
-    });
+    this.log(`Tracing workpiece frame [${xmin.toFixed(1)}, ${ymin.toFixed(1)}] to [${xmax.toFixed(1)}, ${ymax.toFixed(1)}]...`);
+
+    if (this.serialController && this.serialController.isConnected) {
+      await this.serialController.traceFrame(xmin, ymin, xmax, ymax, 1500);
+      return;
+    }
+
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocalhost) {
+      try {
+        await fetch('/api/trace_frame', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ xmin, ymin, xmax, ymax, speed: 1500 })
+        });
+      } catch (e) {}
+    } else {
+      this.log('Frame trace preview: Check boundary rectangle on bed canvas.');
+    }
+  }
+
+  async setDotOriginG92() {
+    this.log('Setting active machine coordinate zero at aiming dot (G92 X0 Y0)...');
+    if (this.serialController && this.serialController.isConnected) {
+      await this.serialController.setZero();
+      this.log('Active Origin set at Aiming Dot (G92 X0 Y0)!');
+      return;
+    }
+
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocalhost) {
+      try {
+        await fetch('/api/zero', { method: 'POST' });
+        this.log('Active Origin set at Aiming Dot (G92 X0 Y0)!');
+      } catch (e) {}
+    } else {
+      this.log('Simulated Origin (0,0) set at current aiming dot.');
+    }
   }
 
   async handleFile(file) {
@@ -1536,6 +1768,8 @@ class FalconApp {
       svgXml: (this.svgXml && this.svgXml.length < 1000000) ? this.svgXml : null,
       fileName: this.currentFile ? this.currentFile.name : (this.currentPresetId || null),
       currentMode: this.currentMode,
+      engraveAlignmentMode: this.engraveAlignmentMode || 'bedScale',
+      selectedAnchor: this.selectedAnchor || 'center',
       speed: this.inputSpeed ? this.inputSpeed.value : '1200',
       power: this.inputPower ? this.inputPower.value : '350',
       passes: this.inputPasses ? this.inputPasses.value : '1'
@@ -1633,6 +1867,13 @@ class FalconApp {
       if (st.currentMode && st.currentMode !== this.currentMode) {
         this.setMode(st.currentMode);
       }
+
+      if (st.engraveAlignmentMode) {
+        this.setEngraveAlignmentMode(st.engraveAlignmentMode);
+      }
+      if (st.selectedAnchor) {
+        this.setMaterialAnchor(st.selectedAnchor);
+      }
     } finally {
       this.isPerformingHistoryAction = false;
     }
@@ -1691,6 +1932,8 @@ class FalconApp {
         },
         currentPaths: (this.currentPaths && this.currentPaths.length < 5000) ? this.currentPaths : [],
         currentMode: this.currentMode,
+        engraveAlignmentMode: this.engraveAlignmentMode || 'bedScale',
+        selectedAnchor: this.selectedAnchor || 'center',
         fileName: this.currentFile ? this.currentFile.name : (this.currentPresetId || null),
         fileBase64: (this.fileBase64 && this.fileBase64.length < 1000000) ? this.fileBase64 : null,
         svgXml: (this.svgXml && this.svgXml.length < 500000) ? this.svgXml : null,
@@ -1777,6 +2020,8 @@ class FalconApp {
         if (st.passes && this.inputPasses) this.inputPasses.value = st.passes;
         if (st.lockAspect !== undefined && this.checkLockAspect) this.checkLockAspect.checked = st.lockAspect;
         if (st.currentMode) this.setMode(st.currentMode);
+        if (st.engraveAlignmentMode) this.setEngraveAlignmentMode(st.engraveAlignmentMode);
+        if (st.selectedAnchor) this.setMaterialAnchor(st.selectedAnchor);
       } finally {
         this.isPerformingHistoryAction = false;
       }

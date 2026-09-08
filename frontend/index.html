@@ -447,6 +447,85 @@
 
     <!-- RIGHT SIDEBAR: TRANSFORM & HARDWARE CONTROLS -->
     <aside class="sidebar sidebar-right">
+      <!-- ENGRAVING ALIGNMENT MODE CARD -->
+      <section class="panel-card" style="border: 1px solid rgba(0, 229, 255, 0.35); box-shadow: 0 4px 16px rgba(0,0,0,0.35);">
+        <div class="card-header" style="padding-bottom: 8px;">
+          <h2 class="card-title" style="display:flex; align-items:center; gap:6px;">
+            <span>🎯 Engraving Alignment Mode</span>
+          </h2>
+        </div>
+
+        <!-- TWO PRIMARY MODES -->
+        <div class="engrave-mode-buttons" style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:10px;">
+          <button id="btnModeBedScale" class="btn-toggle active" style="padding:8px 4px; font-size:11px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:2px;" title="Normal mode: Engrave according to absolute 400x415mm bed scale and glass platform coordinates">
+            <span style="font-weight:700;">📐 Bed Scale</span>
+            <span style="font-size:9px; opacity:0.8;">Normal (Absolute)</span>
+          </button>
+          <button id="btnModeAimingDot" class="btn-toggle" style="padding:8px 4px; font-size:11px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:2px;" title="Aiming dot mode: Place material under laser dot, choose center or corner origin">
+            <span style="font-weight:700;">🔴 Aiming Dot</span>
+            <span style="font-size:9px; opacity:0.8;">Material Target</span>
+          </button>
+        </div>
+
+        <!-- MODE 1 INFO: BED SCALE -->
+        <div id="modeBedScaleInfo" style="font-size:11px; color:#aaa; line-height:1.4; padding:6px 8px; background:rgba(255,255,255,0.03); border-radius:4px; border:1px solid rgba(255,255,255,0.08);">
+          <div style="color:#00e5ff; font-weight:600; margin-bottom:2px;">📐 Bed Scale Mode Active</div>
+          Engraving is calibrated to physical bed origin <strong>(0,0)</strong> and the 400×415 mm bed grid scale. Drag or type coordinates below.
+        </div>
+
+        <!-- MODE 2 CONTROLS: AIMING DOT ALIGNMENT -->
+        <div id="modeAimingDotControls" class="hidden" style="background:rgba(0,0,0,0.35); padding:10px; border-radius:6px; border:1px solid rgba(0,229,255,0.25);">
+          <!-- Aiming Dot Power & Toggle -->
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div>
+              <span style="font-size:11px; font-weight:700; color:#00e5ff;">LASER AIMING DOT</span>
+              <div id="laserDotStatusText" style="font-size:9px; color:#888;">Dot is currently OFF</div>
+            </div>
+            <button id="btnAimingDotToggle" class="btn-toggle-dot" style="padding:5px 10px; font-size:11px; font-weight:600;">
+              <span class="dot-indicator"></span> Turn ON Dot
+            </button>
+          </div>
+
+          <div style="font-size:11px; color:#bbb; margin-bottom:8px; line-height:1.4;">
+            Place your workpiece under the laser dot, then choose what the dot represents on your material:
+          </div>
+
+          <!-- Anchor Selection: 9-Point Visual Grid -->
+          <div style="margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; font-size:10px; text-transform:uppercase; color:#888; font-weight:600; margin-bottom:4px;">
+              <span>Aiming Dot Anchor:</span>
+              <span id="selectedAnchorLabel" style="color:#00e5ff; font-weight:700;">Center</span>
+            </div>
+            <div class="anchor-grid-container" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:4px; max-width:180px; margin:0 auto; background:rgba(0,0,0,0.4); padding:6px; border-radius:6px; border:1px dashed rgba(0,229,255,0.3);">
+              <button class="btn-anchor" data-anchor="top-left" title="Top-Left Corner">↖ TL</button>
+              <button class="btn-anchor" data-anchor="top-center" title="Top-Center">▲ TC</button>
+              <button class="btn-anchor" data-anchor="top-right" title="Top-Right Corner">↗ TR</button>
+              <button class="btn-anchor" data-anchor="mid-left" title="Middle-Left">◀ ML</button>
+              <button class="btn-anchor active" data-anchor="center" title="Center of Workpiece (Recommended)">⦿ Center</button>
+              <button class="btn-anchor" data-anchor="mid-right" title="Middle-Right">▶ MR</button>
+              <button class="btn-anchor" data-anchor="bottom-left" title="Bottom-Left Corner (Origin 0,0)">↙ BL</button>
+              <button class="btn-anchor" data-anchor="bottom-center" title="Bottom-Center">▼ BC</button>
+              <button class="btn-anchor" data-anchor="bottom-right" title="Bottom-Right Corner">↘ BR</button>
+            </div>
+          </div>
+
+          <!-- Alignment Actions -->
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <button id="btnSnapToAimingDot" class="btn-small full-width" style="background:rgba(0,229,255,0.18); border-color:#00e5ff; color:#00e5ff; font-weight:600; padding:6px 8px;" title="Align engraving boundary so selected anchor sits exactly under the laser aiming dot">
+              🎯 Snap Workpiece to Aiming Dot
+            </button>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+              <button id="btnTraceMaterialFrame" class="btn-small" style="font-size:10px; padding:5px 4px;" title="Trace rectangular boundary around material with low-power laser dot">
+                🔍 Trace Frame
+              </button>
+              <button id="btnSetDotOriginG92" class="btn-small" style="font-size:10px; padding:5px 4px;" title="Set active G92 coordinate origin at current aiming dot position">
+                ⌖ Set Origin (G92)
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- WORKPIECE TRANSFORM CARD -->
       <section class="panel-card">
         <div class="card-header">

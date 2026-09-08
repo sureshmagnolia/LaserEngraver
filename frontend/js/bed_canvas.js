@@ -51,6 +51,9 @@ class BedVisualizer {
     
     // Machine live position
     this.laserPos = { x: 0.0, y: 0.0 };
+    this.isAimingDotActive = false;
+    this.engraveMode = 'bedScale'; // 'bedScale' or 'aimingDot'
+    this.materialAnchor = 'center'; // 'center', 'top-left', 'top-center', 'top-right', 'mid-left', 'mid-right', 'bottom-left', 'bottom-center', 'bottom-right'
     
     // Mouse interaction state
     this.isPanning = false;
@@ -145,6 +148,42 @@ class BedVisualizer {
     this.laserPos.x = x;
     this.laserPos.y = y;
     this.render();
+  }
+
+  setEngraveAlignmentMode(mode, anchor = 'center') {
+    this.engraveMode = mode;
+    if (anchor) this.materialAnchor = anchor;
+    this.render();
+  }
+
+  setMaterialAnchor(anchor) {
+    this.materialAnchor = anchor;
+    this.render();
+  }
+
+  setAimingDot(active) {
+    this.isAimingDotActive = !!active;
+    this.render();
+  }
+
+  getMaterialAnchorPoint() {
+    const { center, hw, hh, cos, sin } = this.getWorkpieceCorners();
+    let lx = 0, ly = 0;
+    const a = this.materialAnchor || 'center';
+    if (a === 'top-left') { lx = -hw; ly = -hh; }
+    else if (a === 'top-center') { lx = 0; ly = -hh; }
+    else if (a === 'top-right') { lx = hw; ly = -hh; }
+    else if (a === 'mid-left') { lx = -hw; ly = 0; }
+    else if (a === 'mid-right') { lx = hw; ly = 0; }
+    else if (a === 'bottom-left') { lx = -hw; ly = hh; }
+    else if (a === 'bottom-center') { lx = 0; ly = hh; }
+    else if (a === 'bottom-right') { lx = hw; ly = hh; }
+    else { lx = 0; ly = 0; } // center
+
+    return {
+      x: center.x + (lx * cos - ly * sin),
+      y: center.y + (lx * sin + ly * cos)
+    };
   }
 
   // Helper: Get corner points of the rotated workpiece in canvas pixels
@@ -811,27 +850,106 @@ class BedVisualizer {
       }
     }
 
+    // 5.5 Draw Material Anchor Target Badge if in Aiming Dot Alignment Mode
+    if (this.engraveMode === 'aimingDot' && this.workpiece.visible) {
+      const anchorPt = this.getMaterialAnchorPoint();
+      ctx.save();
+      // Pulsing target concentric rings
+      ctx.strokeStyle = '#ff1744';
+      ctx.fillStyle = 'rgba(255, 23, 68, 0.25)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(anchorPt.x, anchorPt.y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ff1744';
+      ctx.beginPath();
+      ctx.arc(anchorPt.x, anchorPt.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Crosshair lines on anchor
+      ctx.strokeStyle = 'rgba(255, 23, 68, 0.8)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(anchorPt.x - 14, anchorPt.y);
+      ctx.lineTo(anchorPt.x + 14, anchorPt.y);
+      ctx.moveTo(anchorPt.x, anchorPt.y - 14);
+      ctx.lineTo(anchorPt.x, anchorPt.y + 14);
+      ctx.stroke();
+
+      // Target Label Badge
+      ctx.fillStyle = 'rgba(17, 20, 29, 0.92)';
+      ctx.strokeStyle = '#ff1744';
+      ctx.lineWidth = 1;
+      const tagText = `🎯 ${this.materialAnchor.toUpperCase()}`;
+      ctx.font = 'bold 9px JetBrains Mono';
+      const textW = ctx.measureText(tagText).width;
+      ctx.beginPath();
+      ctx.roundRect(anchorPt.x + 12, anchorPt.y - 16, textW + 12, 18, 3);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ff5252';
+      ctx.textAlign = 'left';
+      ctx.fillText(tagText, anchorPt.x + 18, anchorPt.y - 4);
+      ctx.restore();
+    }
+
     // 6. Draw Real-time Laser Head Position
     const lPos = this.mmToCanvas(this.laserPos.x, this.laserPos.y);
     ctx.save();
-    // Glowing laser dot
-    ctx.shadowColor = '#00e5ff';
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = '#00e5ff';
-    ctx.beginPath();
-    ctx.arc(lPos.x, lPos.y, 4, 0, Math.PI * 2);
-    ctx.fill();
+    if (this.isAimingDotActive) {
+      // Powerful glowing red/cyan laser aiming beam
+      ctx.shadowColor = '#ff1744';
+      ctx.shadowBlur = 20;
+      ctx.fillStyle = '#ff1744';
+      ctx.beginPath();
+      ctx.arc(lPos.x, lPos.y, 5.5, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Crosshair target
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.8)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(lPos.x, lPos.y, 12, 0, Math.PI * 2);
-    ctx.moveTo(lPos.x - 16, lPos.y);
-    ctx.lineTo(lPos.x + 16, lPos.y);
-    ctx.moveTo(lPos.x, lPos.y - 16);
-    ctx.lineTo(lPos.x, lPos.y + 16);
-    ctx.stroke();
+      // Outer aiming diode rings
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255, 23, 68, 0.85)';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(lPos.x, lPos.y, 16, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(255, 23, 68, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(lPos.x, lPos.y, 24, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Crosshair
+      ctx.strokeStyle = 'rgba(255, 23, 68, 0.9)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(lPos.x - 20, lPos.y);
+      ctx.lineTo(lPos.x + 20, lPos.y);
+      ctx.moveTo(lPos.x, lPos.y - 20);
+      ctx.lineTo(lPos.x, lPos.y + 20);
+      ctx.stroke();
+    } else {
+      // Normal Cyan Gantry Pointer
+      ctx.shadowColor = '#00e5ff';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#00e5ff';
+      ctx.beginPath();
+      ctx.arc(lPos.x, lPos.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Crosshair target
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.8)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(lPos.x, lPos.y, 12, 0, Math.PI * 2);
+      ctx.moveTo(lPos.x - 16, lPos.y);
+      ctx.lineTo(lPos.x + 16, lPos.y);
+      ctx.moveTo(lPos.x, lPos.y - 16);
+      ctx.lineTo(lPos.x, lPos.y + 16);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }

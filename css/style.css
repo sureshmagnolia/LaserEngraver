@@ -1335,3 +1335,89 @@ button:disabled {
   text-align: center;
 }
 
+/* ENGRAVING ALIGNMENT MODE & AIMING DOT ANCHOR */
+.engrave-mode-buttons .btn-toggle {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.engrave-mode-buttons .btn-toggle:hover {
+  background: rgba(0, 229, 255, 0.1);
+  border-color: rgba(0, 229, 255, 0.5);
+  color: #fff;
+}
+.engrave-mode-buttons .btn-toggle.active {
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.2), rgba(0, 180, 216, 0.35));
+  border-color: var(--laser-cyan);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.25);
+}
+
+.btn-anchor {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #bbb;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 6px 2px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+.btn-anchor:hover {
+  background: rgba(0, 229, 255, 0.2);
+  border-color: var(--laser-cyan);
+  color: #fff;
+}
+.btn-anchor.active {
+  background: var(--laser-cyan);
+  border-color: var(--laser-cyan);
+  color: #0b0e17;
+  font-weight: 700;
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.6);
+}
+
+.btn-toggle-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-toggle-dot:hover {
+  border-color: var(--laser-cyan);
+}
+.btn-toggle-dot.active {
+  background: rgba(255, 82, 82, 0.2);
+  border-color: #ff5252;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255, 82, 82, 0.4);
+}
+.btn-toggle-dot .dot-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #666;
+  transition: all 0.2s;
+}
+.btn-toggle-dot.active .dot-indicator {
+  background: #ff5252;
+  box-shadow: 0 0 8px #ff5252;
+  animation: pulse-dot 1.2s infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+
