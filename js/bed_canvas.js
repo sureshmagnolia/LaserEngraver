@@ -225,17 +225,14 @@ class BedVisualizer {
     return corners;
   }
 
-  // 4 Corner Rotate Handles with curved arrows + 1 Top Stalk Rotate Handle
+  // Rotate Handles: Dedicated Top-Right Corner Handle with curved arrow + Top Stalk Handle
   getCornerRotateHandles() {
-    const { center, hw, hh, rad, cos, sin } = this.getWorkpieceCorners();
-    const offsetDist = 18; // outward distance in pixels from corner
+    const { center, hw, hh, cos, sin } = this.getWorkpieceCorners();
+    const offsetDist = 20; // outward distance in pixels from top-right corner
     const diag = Math.SQRT2;
 
     const rotLocals = {
-      nw: { x: -hw - (offsetDist / diag), y: -hh - (offsetDist / diag) },
-      ne: { x: hw + (offsetDist / diag), y: -hh - (offsetDist / diag) },
-      se: { x: hw + (offsetDist / diag), y: hh + (offsetDist / diag) },
-      sw: { x: -hw - (offsetDist / diag), y: hh + (offsetDist / diag) },
+      ne: { x: hw + (offsetDist / diag), y: -hh - (offsetDist / diag) }, // Top-Right corner rotate handle
       topStalk: { x: 0, y: -hh - 24 } // stalk handle 24px above top center
     };
 
@@ -246,7 +243,8 @@ class BedVisualizer {
       rotHandles[key] = {
         x: center.x + (lx * cos - ly * sin),
         y: center.y + (lx * sin + ly * cos),
-        isStalk: key === 'topStalk'
+        isStalk: key === 'topStalk',
+        isTopRight: key === 'ne'
       };
     }
     return rotHandles;
@@ -779,28 +777,44 @@ class BedVisualizer {
         ctx.strokeRect(cp.x - 4, cp.y - 4, 8, 8);
       }
 
-      // Corner Rotate Handles with Curved Arrows + Top Stalk
+      // Top-Right Corner Rotate Handle Connection Line
+      if (rotHandles.ne) {
+        const neCorner = corners.ne;
+        const neRot = rotHandles.ne;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.moveTo(neCorner.x, neCorner.y);
+        ctx.lineTo(neRot.x, neRot.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Rotate Handles with Curved Arrows (Top-Right Corner + Top Stalk)
       for (const rKey in rotHandles) {
         const rp = rotHandles[rKey];
         ctx.save();
         ctx.shadowColor = '#00e5ff';
-        ctx.shadowBlur = 6;
+        ctx.shadowBlur = 8;
 
         // Badge Circle
+        const radius = rp.isTopRight ? 10 : 8;
         ctx.fillStyle = '#11141d';
         ctx.beginPath();
-        ctx.arc(rp.x, rp.y, 8, 0, Math.PI * 2);
+        ctx.arc(rp.x, rp.y, radius, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.strokeStyle = '#00e5ff';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = rp.isTopRight ? 1.8 : 1.5;
         ctx.stroke();
 
         // Curved Circular Arrow Icon inside Rotate Handle
         ctx.strokeStyle = '#00e5ff';
         ctx.fillStyle = '#00e5ff';
         ctx.lineWidth = 1.2;
-        this.drawCurvedArrow(ctx, rp.x, rp.y, 4.5, -Math.PI / 4, (4 * Math.PI) / 3, true);
+        this.drawCurvedArrow(ctx, rp.x, rp.y, rp.isTopRight ? 5.5 : 4.5, -Math.PI / 4, (4 * Math.PI) / 3, true);
 
         ctx.restore();
       }
