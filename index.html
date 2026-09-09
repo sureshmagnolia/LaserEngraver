@@ -45,22 +45,63 @@
       </div>
     </div>
 
-    <!-- HARDWARE CONTROLS -->
+    <!-- UNIFIED HARDWARE / VIRTUAL CONNECTION -->
     <div class="header-actions">
-      <button id="btnWebSerial" class="btn btn-primary" title="Connect directly to Falcon via Web Serial USB in Chrome/Edge">
-        ⚡ USB Connect
-      </button>
       <div class="port-group">
-        <select id="portSelect" class="select-input" title="Select Local COM Port">
-          <option value="AUTO">🔍 Auto-Detect Laser Port</option>
+        <select id="portSelect" class="select-input" title="Select Target: Virtual Machine, Web Serial USB, or COM Port">
+          <option value="VIRTUAL" selected>🎮 Virtual Falcon Machine (Simulator)</option>
+          <option value="WEB_SERIAL">⚡ Web Serial USB (Direct Browser)</option>
+          <option value="AUTO">🔍 Auto-Detect COM Port</option>
         </select>
-        <button id="btnAutoDetectPort" class="btn-small" style="height:32px; font-size:11px; padding:0 8px;" title="Automatically identify and connect to laser port">Auto-Detect</button>
-        <button id="btnRefreshPorts" class="btn-icon" title="Refresh Local COM Ports">↻</button>
+        <button id="btnRefreshPorts" class="btn-icon" title="Refresh Available Ports">↻</button>
       </div>
-      <button id="btnConnect" class="btn btn-connect" title="Connect via local Python server">Local Bridge</button>
+      <button id="btnConnect" class="btn btn-connect" title="Connect or Disconnect">Connect</button>
       <button id="btnEmergencyStop" class="btn btn-emergency" title="Emergency Stop">STOP</button>
     </div>
   </header>
+
+  <!-- 5-STEP WORKFLOW STEPPER -->
+  <nav class="workflow-stepper">
+    <div class="step-item active" data-step="1" id="stepItem1">
+      <div class="step-num">1</div>
+      <div class="step-content">
+        <span class="step-title">Add Artwork</span>
+        <small class="step-sub">SVG / Image / STL / G-Code</small>
+      </div>
+    </div>
+    <div class="step-arrow">›</div>
+    <div class="step-item" data-step="2" id="stepItem2">
+      <div class="step-num">2</div>
+      <div class="step-content">
+        <span class="step-title">Mode & Tuning</span>
+        <small class="step-sub">Trace / Inkjet / Relief</small>
+      </div>
+    </div>
+    <div class="step-arrow">›</div>
+    <div class="step-item" data-step="3" id="stepItem3">
+      <div class="step-num">3</div>
+      <div class="step-content">
+        <span class="step-title">Bed Placement</span>
+        <small class="step-sub">Bed Scale & Aiming Dot</small>
+      </div>
+    </div>
+    <div class="step-arrow">›</div>
+    <div class="step-item" data-step="4" id="stepItem4">
+      <div class="step-num">4</div>
+      <div class="step-content">
+        <span class="step-title" id="step4Title">Toolpath & Safety</span>
+        <small class="step-sub" id="step4Sub">Pre-Flight & Parameter Check</small>
+      </div>
+    </div>
+    <div class="step-arrow">›</div>
+    <div class="step-item" data-step="5" id="stepItem5">
+      <div class="step-num">5</div>
+      <div class="step-content">
+        <span class="step-title">Engrave & Stream</span>
+        <small class="step-sub">USB / Web Serial / Export</small>
+      </div>
+    </div>
+  </nav>
 
   <!-- MAIN APP CONTAINER -->
   <main class="app-main">
@@ -70,17 +111,17 @@
       <section class="panel-card">
         <div class="card-header">
           <h2 class="card-title">Artwork & File Input</h2>
-          <span class="badge">SVG / PNG / JPG</span>
+          <span class="badge">SVG / PNG / STL / GCODE</span>
         </div>
         <div id="dropZone" class="drop-zone">
-          <input type="file" id="fileInput" accept=".svg,.png,.jpg,.jpeg,.bmp" class="file-input-hidden">
+          <input type="file" id="fileInput" accept=".svg,.png,.jpg,.jpeg,.bmp,.webp,.stl,.gcode,.nc,.gc,.txt" class="file-input-hidden">
           <div class="drop-zone-content">
             <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <polyline points="17 8 12 3 7 8"/>
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
-            <p class="drop-text">Drag & drop <strong>SVG</strong>, <strong>PNG</strong> or <strong>JPG</strong></p>
+            <p class="drop-text">Drop <strong>SVG</strong>, <strong>Image</strong>, <strong>STL (3D)</strong>, or <strong>G-Code</strong></p>
             <span class="drop-hint">or click to browse from PC</span>
           </div>
         </div>
@@ -161,7 +202,7 @@
     </aside>
 
     <!-- CENTER STAGE: WORKSPACE VIEW & PHOTO STUDIO -->
-    <main class="center-stage">
+    <div class="center-stage">
       <div class="view-tabs">
         <button id="tabBedMap" class="view-tab active">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -176,7 +217,7 @@
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
-          Photo-to-Drawing & Tuning Studio
+          Photo-to-Drawing Studio
         </button>
         <button id="tabBedScale" class="view-tab">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -185,7 +226,14 @@
             <circle cx="12" cy="12" r="8"/>
             <circle cx="12" cy="12" r="3"/>
           </svg>
-          Bed Scale (Glass / Wood / Metal)
+          Bed Scale
+        </button>
+        <!-- VIRTUAL MACHINE TAB AT THE END OF THE TAB LIST (Visible ONLY when connected to Virtual Falcon) -->
+        <button id="tabSimulation" class="view-tab highlight-tab hidden" title="Virtual Substrate Engraving Simulation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          🎮 Virtual Machine (Simulation)
         </button>
       </div>
 
@@ -195,18 +243,20 @@
           <div class="toolbar-left" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <span class="bed-dim-tag">Bed: 400 × 415 mm</span>
             <span class="bed-dim-tag highlight">Base Glass: 72 × 72 cm</span>
-            <div class="history-controls" style="display:inline-flex; gap:4px; margin-left:6px;">
+            <div class="history-controls" style="display:inline-flex; gap:4px; margin-left:6px; align-items:center;">
               <button id="btnUndo" class="btn-small" title="Undo Edit (Ctrl+Z)" disabled>↶ Undo</button>
               <button id="btnRedo" class="btn-small" title="Redo Edit (Ctrl+Y)" disabled>↷ Redo</button>
-              <button id="btnAddCanvasItem" class="btn-small" title="Add SVG or Photo to Bed">➕ Add Image</button>
-              <button id="btnDeleteCanvasItem" class="btn-small" style="color:#ff5252; border-color:rgba(255,82,82,0.4);" title="Delete Artwork from Bed (Del / Backspace)">🗑 Delete</button>
+              <button id="btnAddImage" class="btn-small" title="Add SVG or Photo to Bed">➕ Add Image</button>
+              <button id="btnSelectObject" class="btn-small" title="Select or Deselect Object on Bed">🎯 Select Object</button>
+              <button id="btnDeleteSelected" class="btn-small btn-danger-action" title="Delete Selected Artwork/Scale from Bed (Del / Backspace)">🗑 Delete</button>
+              <button id="btnClearBed" class="btn-small btn-danger-outline" title="Clear all objects, bed scale grids, and toolpaths from the bed">🧹 Clear All</button>
             </div>
           </div>
           <div class="toolbar-right" style="display:flex; align-items:center; gap:6px;">
-            <span id="autoSaveIndicator" class="bed-dim-tag" style="color:rgba(0,229,255,0.75); font-size:10px;">💾 Autosaved</span>
+            <span id="autosaveIndicator" class="bed-dim-tag" style="color:rgba(0,229,255,0.75); font-size:10px;">💾 Autosaved</span>
             <button id="btnZoomIn" class="btn-icon-tool" title="Zoom In">+</button>
             <button id="btnZoomOut" class="btn-icon-tool" title="Zoom Out">-</button>
-            <button id="btnResetView" class="btn-icon-tool" title="Fit to Screen">⤢</button>
+            <button id="btnZoomReset" class="btn-icon-tool" title="Fit to Screen">⤢</button>
           </div>
         </div>
         <div class="canvas-container">
@@ -215,6 +265,157 @@
             <span><span class="legend-dot gantry"></span> Falcon Head (Realtime)</span>
             <span><span class="legend-dot workpiece"></span> Workpiece Boundary</span>
             <span><span class="legend-dot toolpath"></span> Vector Toolpath</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- VIEW 2: VIRTUAL LASER SIMULATION & MATERIAL STUDIO (Visible only when connected to Virtual Machine) -->
+      <div id="viewSimulation" class="view-panel">
+        <div class="simulation-layout">
+          <!-- TOP MATERIAL SELECTION, SIZE SETTINGS & ACTION BAR -->
+          <div class="sim-header-card" id="simHeaderCard">
+            <!-- MATERIAL TYPE SELECTION -->
+            <div class="sim-material-section" id="simMaterialSection">
+              <div class="sim-section-title">
+                <span class="pulse-dot"></span>
+                <strong>Substrate Material:</strong>
+                <span class="text-muted" id="simMatHelpText">Wood • Acrylic • Glass • Metal</span>
+              </div>
+              <div class="sim-material-cards">
+                <button class="sim-mat-card active" data-sim-material="wood" id="simMatWood" title="Basswood / Birch Plywood - Deep carbonized charring">
+                  <span class="sim-mat-icon">🪵</span>
+                  <div class="sim-mat-info">
+                    <strong>Wood / MDF</strong>
+                    <small>F900 S280 • Charred</small>
+                  </div>
+                </button>
+                <button class="sim-mat-card" data-sim-material="acrylic" id="simMatAcrylic" title="Cast Optical Acrylic - Frosted crystalline white mark with edge-lit glow">
+                  <span class="sim-mat-icon">💎</span>
+                  <div class="sim-mat-info">
+                    <strong>Optical Acrylic</strong>
+                    <small>F800 S350 • Frosted Glow</small>
+                  </div>
+                </button>
+                <button class="sim-mat-card" data-sim-material="glass" id="simMatGlass" title="Black / Coated Glass Plate - Delicate micro-fractured frosted mark">
+                  <span class="sim-mat-icon">🪟</span>
+                  <div class="sim-mat-info">
+                    <strong>Coated Glass</strong>
+                    <small>F800 S450 • Frosted Etch</small>
+                  </div>
+                </button>
+                <button class="sim-mat-card" data-sim-material="metal" id="simMatMetal" title="Anodized Aluminum / Laser Metal - Laser ablation exposing bright silver bare aluminum">
+                  <span class="sim-mat-icon">🛡️</span>
+                  <div class="sim-mat-info">
+                    <strong>Anodized Metal</strong>
+                    <small>F600 S850 • Silver Ablation</small>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <!-- SUBSTRATE MATERIAL SIZE & SHAPE CONTROLS -->
+            <div class="sim-dimensions-section" id="simDimensionsSection">
+              <div class="sim-section-title">
+                <strong>Substrate Size & Shape:</strong>
+              </div>
+              <div class="sim-dim-controls">
+                <div class="sim-shape-pills">
+                  <button id="btnSimShapeRound" class="sim-pill-btn active" data-shape="round" title="Circular / Round Blank (Coin, Coaster, Disc)">⚪ Round</button>
+                  <button id="btnSimShapeRect" class="sim-pill-btn" data-shape="rect" title="Rectangular / Square Blank (Plaque, Sheet, Plate)">⬜ Rect</button>
+                </div>
+                <div class="sim-dim-inputs">
+                  <label class="dim-label" for="simMaterialWidth">W:</label>
+                  <input type="number" id="simMaterialWidth" value="100" min="5" max="400" step="5" class="sim-num-input" title="Substrate Width in mm">
+                  <span class="dim-mult">×</span>
+                  <label class="dim-label" for="simMaterialHeight">H:</label>
+                  <input type="number" id="simMaterialHeight" value="100" min="5" max="415" step="5" class="sim-num-input" title="Substrate Height in mm">
+                  <span class="dim-unit">mm</span>
+                </div>
+                <div class="sim-presets-pills">
+                  <button class="sim-preset-pill" data-w="40" data-h="40" data-shape="round" title="40mm Round Keychain / Coin">40mm Ø</button>
+                  <button class="sim-preset-pill active" data-w="100" data-h="100" data-shape="round" title="100mm Round Coaster">100mm Ø</button>
+                  <button class="sim-preset-pill" data-w="150" data-h="150" data-shape="rect" title="150×150mm Plaque">150×150</button>
+                  <button class="sim-preset-pill" data-w="200" data-h="200" data-shape="rect" title="200×200mm Sheet">200×200</button>
+                  <button id="btnSimFitArtwork" class="sim-preset-pill fit-btn" title="Fit substrate closely to current artwork dimensions + 10mm padding">Fit Artwork</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- VIRTUAL LASER PARAMETERS (SPEED & POWER LIKE REAL MACHINE) -->
+            <div class="sim-laser-params-section" id="simLaserParamsSection">
+              <div class="sim-section-title">
+                <span class="laser-dot-cyan"></span>
+                <strong>Virtual Laser Parameters:</strong>
+                <span class="text-muted" id="simPowerPctTag">28% • 1.4W</span>
+              </div>
+              <div class="sim-laser-controls">
+                <div class="sim-dim-inputs">
+                  <label class="dim-label" for="simInputSpeed">Speed:</label>
+                  <input type="number" id="simInputSpeed" value="900" min="100" max="6000" step="50" class="sim-num-input" style="width:68px;" title="Virtual Feedrate in mm/min">
+                  <span class="dim-unit">mm/min</span>
+                  <span class="dim-mult">•</span>
+                  <label class="dim-label" for="simInputPower">Power:</label>
+                  <input type="number" id="simInputPower" value="280" min="0" max="1000" step="10" class="sim-num-input" style="width:58px;" title="Virtual Laser Power S-Value (0 - 1000)">
+                  <span class="dim-unit">S</span>
+                  <span class="dim-mult">•</span>
+                  <label class="dim-label" for="simInputPasses">Passes:</label>
+                  <input type="number" id="simInputPasses" value="1" min="1" max="10" class="sim-num-input" style="width:42px;" title="Number of Passes">
+                </div>
+                <div class="sim-presets-pills">
+                  <button class="sim-param-preset-pill active" data-sim-speed="900" data-sim-power="280" title="Standard balanced wood/mdf engraving">Standard (F900 S280)</button>
+                  <button class="sim-param-preset-pill" data-sim-speed="1200" data-sim-power="180" title="Light, fine surface etching">Light Etch (F1200 S180)</button>
+                  <button class="sim-param-preset-pill" data-sim-speed="600" data-sim-power="450" title="Darker carbonized deep char">Deep Char (F600 S450)</button>
+                  <button class="sim-param-preset-pill" data-sim-speed="500" data-sim-power="850" title="High power ablation for anodized metal">High Power (F500 S850)</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="sim-header-actions">
+              <button id="btnProceedVirtualEngrave" class="btn btn-start pulse" title="Run virtual engraving on selected substrate">
+                ▶ Proceed to Virtual Engrave
+              </button>
+              <button id="btnExportSimSnapshot" class="btn-small" title="Export High-Resolution Simulation Mockup">
+                📸 Save Mockup PNG
+              </button>
+            </div>
+          </div>
+
+          <!-- SIMULATION CANVAS VIEWPORT -->
+          <div class="sim-canvas-wrapper">
+            <canvas id="simCanvas"></canvas>
+            <div class="sim-watermark-overlay">
+              <span id="simActiveMaterialLabel" class="sim-watermark-tag">Substrate: Wood / MDF</span>
+            </div>
+          </div>
+
+          <!-- PLAYBACK & PROGRESS SCRUBBER BAR -->
+          <div class="sim-playback-bar">
+            <div class="sim-playback-group">
+              <button id="btnSimPlay" class="btn-sim-play" title="Play Simulation">▶ Play</button>
+              <button id="btnSimPause" class="btn-sim-pause" title="Pause Simulation" disabled>⏸ Pause</button>
+              <button id="btnSimReset" class="btn-sim-reset" title="Reset Simulation">⏹ Reset</button>
+            </div>
+
+            <div class="sim-speed-group">
+              <span class="sim-speed-label">Speed:</span>
+              <button class="btn-speed" data-speed="1">1x</button>
+              <button class="btn-speed" data-speed="5">5x</button>
+              <button class="btn-speed active" data-speed="10">10x</button>
+              <button class="btn-speed" data-speed="25">25x</button>
+              <button class="btn-speed" data-speed="50">50x</button>
+              <button class="btn-speed" data-speed="100">100x</button>
+              <button id="btnSimInstant" class="btn-instant" title="Skip animation and render 100% completed engraving immediately">
+                ⚡ Instant Final Result
+              </button>
+            </div>
+
+            <div class="sim-scrubber-group">
+              <input type="range" id="simScrubber" min="0" max="100" value="0" step="0.1" class="slider-input sim-scrubber-slider" title="Scrub timeline to inspect burn state at any progress percentage">
+              <div class="sim-scrubber-meta">
+                <span id="simProgressPct" class="mono text-cyan">0.0%</span>
+                <span id="simTimeDisplay" class="mono text-muted">00:00 / 00:00</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -443,7 +644,7 @@
           </div>
         </div>
       </div>
-    </main>
+    </div>
 
     <!-- RIGHT SIDEBAR: TRANSFORM & HARDWARE CONTROLS -->
     <aside class="sidebar sidebar-right">
@@ -562,7 +763,8 @@
           </label>
           <button id="btnCenterBed" class="btn-small">Center on Bed</button>
           <button id="btnBatch2x2" class="btn-small" title="Arrange 4 items in a 2x2 grid">2×2 Batch</button>
-          <button id="btnDeleteWorkpiece" class="btn-small" style="color:#ff5252; border-color:rgba(255,82,82,0.4);" title="Delete Artwork from Bed">🗑 Delete Item</button>
+          <button id="btnDeleteWorkpiece" class="btn-small btn-danger-action" title="Delete Artwork from Bed (Del / Backspace)">🗑 Delete Item</button>
+          <button id="btnClearBedSidebar" class="btn-small btn-danger-outline" title="Clear all items from bed">🧹 Clear Bed</button>
         </div>
 
         <!-- QUICK TRANSFORMS: FLIP & ROTATE -->
@@ -695,6 +897,9 @@
 
         <div class="execution-actions">
           <button id="btnGenerateGcode" class="btn btn-secondary full-width mb-2">⚡ Generate Toolpath G-Code</button>
+          <button id="btnTriggerAudit" class="btn btn-small full-width mb-2" style="border: 1px solid rgba(0,229,255,0.3); color: #00e5ff; background: rgba(0,229,255,0.06);" title="Inspect bed boundaries, power, and feedrate safety">
+            🛡️ Pre-Flight Safety Check
+          </button>
           <div class="btn-stream-group">
             <button id="btnStartJob" class="btn btn-start">▶ START ENGRAVE</button>
             <button id="btnPauseJob" class="btn btn-pause" disabled>⏸ Pause</button>
@@ -704,6 +909,42 @@
       </section>
     </aside>
   </main>
+
+  <!-- PRE-FLIGHT AUDIT MODAL -->
+  <div id="modalAudit" class="modal-overlay hidden">
+    <div class="modal-card audit-modal">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-icon">🛡️</span>
+          <div>
+            <h3>Pre-Flight Safety Audit & Parameter Inspection</h3>
+            <span id="auditSubtitle" class="text-muted">Creality Falcon 5W • 400×415 mm Bed Safety Envelope</span>
+          </div>
+        </div>
+        <button id="btnCloseAuditModal" class="btn-close-modal" title="Close Audit Modal">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="auditSummaryBanner" class="audit-summary-banner pass">
+          <span id="auditSummaryIcon">✅</span>
+          <div id="auditSummaryText">All 6 pre-flight safety checks passed!</div>
+        </div>
+        <div id="auditChecklist" class="audit-checklist">
+          <!-- Dynamically populated checklist items -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btnAuditAutoFit" class="btn btn-secondary hidden" title="Automatically scale and center workpiece into safe 400x415mm envelope">
+          📐 Auto-Fit to Bed
+        </button>
+        <button id="btnCloseAuditFooter" class="btn btn-secondary" title="Dismiss Audit Dialog">
+          Close
+        </button>
+        <button id="btnAuditStartEngrave" class="btn btn-start" title="Dismiss audit and commence laser engraving">
+          ⚡ Proceed to Engrave
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- LOG DRAWER -->
   <footer class="app-footer">
@@ -718,6 +959,9 @@
   <script src="js/raster_compiler.js"></script>
   <script src="js/photo_tracer_client.js"></script>
   <script src="js/bed_canvas.js"></script>
+  <script src="js/material_simulator.js"></script>
+  <script src="js/stl_gcode_loader.js"></script>
+  <script src="js/job_auditor.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

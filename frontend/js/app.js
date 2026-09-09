@@ -7,6 +7,9 @@
 class FalconApp {
   constructor() {
     this.visualizer = new BedVisualizer('bedCanvas');
+    this.visualizer.onSelectionChanged = (selected) => {
+      this.updateSelectionUI(selected);
+    };
     this.ws = null;
     
     // Application State
@@ -19,8 +22,8 @@ class FalconApp {
     this.selectedBedMaterial = 'glass';
     this.jogStep = 1.0;
     this.engraveAlignmentMode = 'bedScale'; // 'bedScale' or 'aimingDot'
-    this.selectedAnchor = 'center'; // 'center', 'top-left', 'top-center', 'top-right', 'mid-left', 'mid-right', 'bottom-left', 'bottom-center', 'bottom-right'
     this.isAimingDotActive = false;
+    this.isVirtualConnected = false;
 
     // Undo / Redo History Stack
     this.history = [];
@@ -77,8 +80,13 @@ class FalconApp {
     // History & Canvas Item Toolbar buttons
     this.btnUndo = document.getElementById('btnUndo');
     this.btnRedo = document.getElementById('btnRedo');
-    this.btnAddCanvasItem = document.getElementById('btnAddCanvasItem');
-    this.btnDeleteCanvasItem = document.getElementById('btnDeleteCanvasItem');
+    this.btnAddImage = document.getElementById('btnAddImage') || document.getElementById('btnAddCanvasItem');
+    this.btnAddCanvasItem = this.btnAddImage;
+    this.btnSelectObject = document.getElementById('btnSelectObject');
+    this.btnDeleteSelected = document.getElementById('btnDeleteSelected') || document.getElementById('btnDeleteCanvasItem');
+    this.btnDeleteCanvasItem = this.btnDeleteSelected;
+    this.btnClearBed = document.getElementById('btnClearBed');
+    this.btnClearBedSidebar = document.getElementById('btnClearBedSidebar');
     this.btnDeleteWorkpiece = document.getElementById('btnDeleteWorkpiece');
     this.autoSaveIndicator = document.getElementById('autoSaveIndicator');
     this.statusText = document.getElementById('statusText');
@@ -124,11 +132,95 @@ class FalconApp {
 
     // Tabs
     this.tabBedMap = document.getElementById('tabBedMap');
+    this.tabSimulation = document.getElementById('tabSimulation');
     this.tabPhotoStudio = document.getElementById('tabPhotoStudio');
     this.tabBedScale = document.getElementById('tabBedScale');
     this.viewBedMap = document.getElementById('viewBedMap');
+    this.viewSimulation = document.getElementById('viewSimulation');
     this.viewPhotoStudio = document.getElementById('viewPhotoStudio');
     this.viewBedScale = document.getElementById('viewBedScale');
+
+    // Virtual Material & Laser Simulator
+    this.simulator = new MaterialSimulator('simCanvas');
+    if (this.simulator) {
+      this.simulator.onProgressUpdate = (pct, elapsedSec) => {
+        if (this.simProgressPct) this.simProgressPct.textContent = `${pct.toFixed(1)}%`;
+        if (this.simScrubber && !this.isUserDraggingScrubber) this.simScrubber.value = pct;
+        if (this.simTimeDisplay) {
+          const em = Math.floor(elapsedSec / 60);
+          const es = Math.floor(elapsedSec % 60);
+          const tm = Math.floor((this.simulator.estimatedTotalTime || 0) / 60);
+          const ts = Math.floor((this.simulator.estimatedTotalTime || 0) % 60);
+          this.simTimeDisplay.textContent = `${String(em).padStart(2,'0')}:${String(es).padStart(2,'0')} / ${String(tm).padStart(2,'0')}:${String(ts).padStart(2,'0')}`;
+        }
+        // Update Live Status HUD and Job Monitor when in Virtual Machine mode
+        if (this.isVirtualConnected) {
+          if (this.hudCoords) this.hudCoords.textContent = `X: ${this.simulator.currentHeadPos.x.toFixed(1)} | Y: ${this.simulator.currentHeadPos.y.toFixed(1)} (Sim)`;
+          if (this.hudFeedPower) this.hudFeedPower.textContent = `F: ${this.simulator.currentFeed} | S: ${this.simulator.isLaserFiring ? this.simulator.currentPower : 0}`;
+          if (this.jobProgressBar) this.jobProgressBar.style.width = `${pct}%`;
+          if (this.jobProgressPct) this.jobProgressPct.textContent = `${pct.toFixed(1)}% (Virtual)`;
+        }
+      };
+      this.simulator.onSimulationComplete = () => {
+        if (this.btnSimPlay) this.btnSimPlay.disabled = false;
+        if (this.btnSimPause) this.btnSimPause.disabled = true;
+        if (this.btnProceedVirtualEngrave) this.btnProceedVirtualEngrave.disabled = false;
+        if (this.isVirtualConnected && this.jobProgressPct) {
+          this.jobProgressPct.textContent = '100% (Virtual Finished)';
+          if (this.jobEtaText) this.jobEtaText.textContent = 'Done!';
+        }
+        this.log('Virtual laser simulation finished! Inspect engraved substrate.');
+      };
+    }
+
+    // Simulation & Virtual Machine Controls
+    this.simMaterialSection = document.getElementById('simMaterialSection');
+    this.simMatHelpText = document.getElementById('simMatHelpText');
+    this.btnProceedVirtualEngrave = document.getElementById('btnProceedVirtualEngrave');
+    this.btnSimPlay = document.getElementById('btnSimPlay');
+    this.btnSimPause = document.getElementById('btnSimPause');
+    this.btnSimReset = document.getElementById('btnSimReset');
+    this.btnSimInstant = document.getElementById('btnSimInstant');
+    this.simScrubber = document.getElementById('simScrubber');
+    this.simProgressPct = document.getElementById('simProgressPct');
+    this.simTimeDisplay = document.getElementById('simTimeDisplay');
+    this.btnExportSimSnapshot = document.getElementById('btnExportSimSnapshot');
+    this.simMaterialButtons = document.querySelectorAll('.sim-mat-card');
+    this.simSpeedButtons = document.querySelectorAll('.btn-speed');
+    this.simActiveMaterialLabel = document.getElementById('simActiveMaterialLabel');
+
+    // Substrate Dimensions & Shape Controls
+    this.btnSimShapeRound = document.getElementById('btnSimShapeRound');
+    this.btnSimShapeRect = document.getElementById('btnSimShapeRect');
+    this.simMaterialWidth = document.getElementById('simMaterialWidth');
+    this.simMaterialHeight = document.getElementById('simMaterialHeight');
+    this.simPresetPills = document.querySelectorAll('.sim-preset-pill');
+    this.btnSimFitArtwork = document.getElementById('btnSimFitArtwork');
+
+    // Virtual Laser Speed & Power Controls
+    this.simInputSpeed = document.getElementById('simInputSpeed');
+    this.simInputPower = document.getElementById('simInputPower');
+    this.simInputPasses = document.getElementById('simInputPasses');
+    this.simPowerPctTag = document.getElementById('simPowerPctTag');
+    this.simParamPresetPills = document.querySelectorAll('.sim-param-preset-pill');
+
+    // Pre-Flight Audit Modal Elements
+    this.btnTriggerAudit = document.getElementById('btnTriggerAudit');
+    this.modalAudit = document.getElementById('modalAudit');
+    this.btnCloseAuditModal = document.getElementById('btnCloseAuditModal');
+    this.btnCloseAuditFooter = document.getElementById('btnCloseAuditFooter');
+    this.btnAuditAutoFit = document.getElementById('btnAuditAutoFit');
+    this.btnAuditStartEngrave = document.getElementById('btnAuditStartEngrave');
+    this.auditSummaryBanner = document.getElementById('auditSummaryBanner');
+    this.auditSummaryIcon = document.getElementById('auditSummaryIcon');
+    this.auditSummaryText = document.getElementById('auditSummaryText');
+    this.auditChecklist = document.getElementById('auditChecklist');
+
+    // 5-Step Workflow Stepper
+    this.workflowStepItems = document.querySelectorAll('.step-item');
+    this.step4Title = document.getElementById('step4Title');
+    this.step4Sub = document.getElementById('step4Sub');
+    this.currentWorkflowStep = 1;
 
     // Bed Scale controls
     this.materialCards = document.querySelectorAll('.material-card');
@@ -218,8 +310,200 @@ class FalconApp {
 
     // View Tabs
     this.tabBedMap.addEventListener('click', () => this.switchTab('bedMap'));
+    if (this.tabSimulation) this.tabSimulation.addEventListener('click', () => this.switchTab('simulation'));
     this.tabPhotoStudio.addEventListener('click', () => this.switchTab('photoStudio'));
     this.tabBedScale.addEventListener('click', () => this.switchTab('bedScale'));
+
+    // 5-Step Workflow Stepper Navigation
+    if (this.workflowStepItems) {
+      this.workflowStepItems.forEach(item => {
+        item.addEventListener('click', () => {
+          const step = parseInt(item.getAttribute('data-step')) || 1;
+          this.navigateToWorkflowStep(step);
+        });
+      });
+    }
+
+    // Simulation Controls Events
+    if (this.btnSimPlay) {
+      this.btnSimPlay.addEventListener('click', () => {
+        if (this.simulator) {
+          this.simulator.play();
+          this.btnSimPlay.disabled = true;
+          this.btnSimPause.disabled = false;
+        }
+      });
+    }
+    if (this.btnSimPause) {
+      this.btnSimPause.addEventListener('click', () => {
+        if (this.simulator) {
+          this.simulator.pause();
+          this.btnSimPlay.disabled = false;
+          this.btnSimPause.disabled = true;
+        }
+      });
+    }
+    if (this.btnSimReset) {
+      this.btnSimReset.addEventListener('click', () => {
+        if (this.simulator) {
+          this.simulator.reset();
+          this.btnSimPlay.disabled = false;
+          this.btnSimPause.disabled = true;
+        }
+      });
+    }
+    if (this.btnSimInstant) {
+      this.btnSimInstant.addEventListener('click', () => {
+        if (this.simulator) {
+          this.simulator.renderInstantResult();
+          this.btnSimPlay.disabled = false;
+          this.btnSimPause.disabled = true;
+        }
+      });
+    }
+    if (this.btnExportSimSnapshot) {
+      this.btnExportSimSnapshot.addEventListener('click', () => {
+        if (this.simulator) {
+          const name = (this.currentFile ? this.currentFile.name.replace(/\.[^/.]+$/, '') : 'falcon_mockup') + `_${this.simulator.currentMaterial}.png`;
+          this.simulator.exportSnapshot(name);
+          this.log(`Exported simulation preview mockup snapshot: ${name}`);
+        }
+      });
+    }
+    if (this.simSpeedButtons) {
+      this.simSpeedButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          this.simSpeedButtons.forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const speed = parseFloat(btn.getAttribute('data-speed')) || 10;
+          if (this.simulator) this.simulator.setSpeed(speed);
+        });
+      });
+    }
+    if (this.simScrubber) {
+      this.simScrubber.addEventListener('input', (e) => {
+        if (this.simulator) {
+          this.isUserDraggingScrubber = true;
+          this.simulator.scrubToPercent(parseFloat(e.target.value));
+          this.btnSimPlay.disabled = false;
+          this.btnSimPause.disabled = true;
+        }
+      });
+      this.simScrubber.addEventListener('change', () => {
+        this.isUserDraggingScrubber = false;
+      });
+    }
+    // Virtual Falcon Machine Controls & Simulation Gating
+    if (this.btnProceedVirtualEngrave) {
+      this.btnProceedVirtualEngrave.addEventListener('click', () => this.proceedToVirtualEngrave());
+    }
+
+    if (this.simMaterialButtons) {
+      this.simMaterialButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const mat = btn.getAttribute('data-sim-material') || 'wood';
+          this.setSimulationMaterial(mat);
+        });
+      });
+    }
+
+    // Substrate Dimensions & Shape Controls
+    if (this.btnSimShapeRound) {
+      this.btnSimShapeRound.addEventListener('click', () => {
+        this.setSimulationSubstrateShape('round');
+      });
+    }
+    if (this.btnSimShapeRect) {
+      this.btnSimShapeRect.addEventListener('click', () => {
+        this.setSimulationSubstrateShape('rect');
+      });
+    }
+    if (this.simMaterialWidth) {
+      this.simMaterialWidth.addEventListener('input', () => this.updateSimulationSubstrateSize());
+    }
+    if (this.simMaterialHeight) {
+      this.simMaterialHeight.addEventListener('input', () => this.updateSimulationSubstrateSize());
+    }
+    if (this.simPresetPills) {
+      this.simPresetPills.forEach(pill => {
+        pill.addEventListener('click', () => {
+          const w = parseFloat(pill.getAttribute('data-w'));
+          const h = parseFloat(pill.getAttribute('data-h'));
+          const shape = pill.getAttribute('data-shape') || 'round';
+          if (w && h) {
+            this.setSimulationSubstrateDimensions(w, h, shape);
+            this.simPresetPills.forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+          }
+        });
+      });
+    }
+    if (this.btnSimFitArtwork) {
+      this.btnSimFitArtwork.addEventListener('click', () => {
+        const artW = parseFloat(this.inputWidth.value) || 40;
+        const artH = parseFloat(this.inputHeight.value) || 40;
+        const subW = Math.round(artW + 10);
+        const subH = Math.round(artH + 10);
+        const shape = Math.abs(artW - artH) < 2 ? 'round' : 'rect';
+        this.setSimulationSubstrateDimensions(subW, subH, shape);
+        if (this.simPresetPills) this.simPresetPills.forEach(p => p.classList.remove('active'));
+        this.btnSimFitArtwork.classList.add('active');
+      });
+    }
+
+    // Virtual Laser Speed & Power Listeners
+    if (this.simInputSpeed) {
+      this.simInputSpeed.addEventListener('input', () => this.updateSimulationLaserParams());
+    }
+    if (this.simInputPower) {
+      this.simInputPower.addEventListener('input', () => this.updateSimulationLaserParams());
+    }
+    if (this.simInputPasses) {
+      this.simInputPasses.addEventListener('input', () => this.updateSimulationLaserParams());
+    }
+    if (this.simParamPresetPills) {
+      this.simParamPresetPills.forEach(pill => {
+        pill.addEventListener('click', () => {
+          const speed = parseFloat(pill.getAttribute('data-sim-speed'));
+          const power = parseInt(pill.getAttribute('data-sim-power'));
+          if (speed && power !== undefined) {
+            if (this.simInputSpeed) this.simInputSpeed.value = speed;
+            if (this.simInputPower) this.simInputPower.value = power;
+            this.updateSimulationLaserParams();
+            this.simParamPresetPills.forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+          }
+        });
+      });
+    }
+
+    // Pre-Flight Safety Check Trigger
+    if (this.btnTriggerAudit) {
+      this.btnTriggerAudit.addEventListener('click', () => this.runJobAudit());
+    }
+    if (this.btnCloseAuditModal) {
+      this.btnCloseAuditModal.addEventListener('click', () => {
+        if (this.modalAudit) this.modalAudit.classList.add('hidden');
+      });
+    }
+    if (this.btnCloseAuditFooter) {
+      this.btnCloseAuditFooter.addEventListener('click', () => {
+        if (this.modalAudit) this.modalAudit.classList.add('hidden');
+      });
+    }
+    if (this.btnAuditAutoFit) {
+      this.btnAuditAutoFit.addEventListener('click', () => {
+        this.centerWorkpiece();
+        if (this.modalAudit) this.modalAudit.classList.add('hidden');
+        this.runJobAudit();
+      });
+    }
+    if (this.btnAuditStartEngrave) {
+      this.btnAuditStartEngrave.addEventListener('click', () => {
+        if (this.modalAudit) this.modalAudit.classList.add('hidden');
+        this.startJob();
+      });
+    }
 
     // Material selector for Bed Scale
     this.materialCards.forEach(card => {
@@ -236,9 +520,16 @@ class FalconApp {
     // Toolbar History & Canvas Item Actions
     if (this.btnUndo) this.btnUndo.addEventListener('click', () => this.undo());
     if (this.btnRedo) this.btnRedo.addEventListener('click', () => this.redo());
-    if (this.btnAddCanvasItem) this.btnAddCanvasItem.addEventListener('click', () => this.fileInput.click());
-    if (this.btnDeleteCanvasItem) this.btnDeleteCanvasItem.addEventListener('click', () => this.deleteWorkpiece());
-    if (this.btnDeleteWorkpiece) this.btnDeleteWorkpiece.addEventListener('click', () => this.deleteWorkpiece());
+    if (this.btnAddImage) this.btnAddImage.addEventListener('click', () => this.fileInput.click());
+    else if (this.btnAddCanvasItem) this.btnAddCanvasItem.addEventListener('click', () => this.fileInput.click());
+    if (this.btnSelectObject) this.btnSelectObject.addEventListener('click', () => this.toggleSelectObject());
+    if (this.btnDeleteSelected) this.btnDeleteSelected.addEventListener('click', () => this.deleteSelected());
+    if (this.btnDeleteCanvasItem && this.btnDeleteCanvasItem !== this.btnDeleteSelected) {
+      this.btnDeleteCanvasItem.addEventListener('click', () => this.deleteSelected());
+    }
+    if (this.btnDeleteWorkpiece) this.btnDeleteWorkpiece.addEventListener('click', () => this.deleteSelected());
+    if (this.btnClearBed) this.btnClearBed.addEventListener('click', () => this.clearBed());
+    if (this.btnClearBedSidebar) this.btnClearBedSidebar.addEventListener('click', () => this.clearBed());
 
     // Engraving Alignment Modes & Aiming Dot Actions
     if (this.btnModeBedScale) {
@@ -298,17 +589,26 @@ class FalconApp {
     });
 
     // Toolbar zoom
-    document.getElementById('btnZoomIn').addEventListener('click', () => {
-      this.visualizer.scale = Math.min(8.0, this.visualizer.scale * 1.2);
-      this.visualizer.render();
-    });
-    document.getElementById('btnZoomOut').addEventListener('click', () => {
-      this.visualizer.scale = Math.max(0.2, this.visualizer.scale / 1.2);
-      this.visualizer.render();
-    });
-    document.getElementById('btnResetView').addEventListener('click', () => {
-      this.visualizer.fitToScreen();
-    });
+    const btnZoomIn = document.getElementById('btnZoomIn');
+    if (btnZoomIn) {
+      btnZoomIn.addEventListener('click', () => {
+        this.visualizer.scale = Math.min(8.0, this.visualizer.scale * 1.2);
+        this.visualizer.render();
+      });
+    }
+    const btnZoomOut = document.getElementById('btnZoomOut');
+    if (btnZoomOut) {
+      btnZoomOut.addEventListener('click', () => {
+        this.visualizer.scale = Math.max(0.2, this.visualizer.scale / 1.2);
+        this.visualizer.render();
+      });
+    }
+    const btnZoomReset = document.getElementById('btnZoomReset') || document.getElementById('btnResetView');
+    if (btnZoomReset) {
+      btnZoomReset.addEventListener('click', () => {
+        this.visualizer.fitToScreen();
+      });
+    }
 
     // File Drag & Drop
     this.dropZone.addEventListener('click', () => this.fileInput.click());
@@ -535,15 +835,24 @@ class FalconApp {
 
   switchTab(tabId) {
     this.tabBedMap.classList.toggle('active', tabId === 'bedMap');
+    if (this.tabSimulation) this.tabSimulation.classList.toggle('active', tabId === 'simulation');
     this.tabPhotoStudio.classList.toggle('active', tabId === 'photoStudio');
     this.tabBedScale.classList.toggle('active', tabId === 'bedScale');
 
     this.viewBedMap.classList.toggle('active', tabId === 'bedMap');
+    if (this.viewSimulation) this.viewSimulation.classList.toggle('active', tabId === 'simulation');
     this.viewPhotoStudio.classList.toggle('active', tabId === 'photoStudio');
     this.viewBedScale.classList.toggle('active', tabId === 'bedScale');
 
     if (tabId === 'bedMap') {
       this.visualizer.resizeCanvas();
+    } else if (tabId === 'simulation') {
+      if (this.simulator) {
+        this.simulator.initCanvasSize();
+        this.syncSimulatorWithWorkpiece();
+        this.simulator.render();
+      }
+      this.setWorkflowStep(4);
     }
   }
 
@@ -573,6 +882,11 @@ class FalconApp {
   }
 
   updateTelemetry(status) {
+    if (this.isVirtualConnected && !status.connected) {
+      // Do not overwrite Virtual Falcon Online status badge
+      return;
+    }
+
     // State badge
     const state = status.state || 'DISCONNECTED';
     this.statusText.textContent = state;
@@ -632,6 +946,12 @@ class FalconApp {
   async refreshPorts() {
     this.portSelect.innerHTML = '';
 
+    // Virtual Falcon Machine Simulator (Always at top of connection options)
+    const virtualOpt = document.createElement('option');
+    virtualOpt.value = 'VIRTUAL';
+    virtualOpt.textContent = '🎮 Virtual Falcon Machine (Simulator)';
+    this.portSelect.appendChild(virtualOpt);
+
     // Auto-detect option
     const autoOpt = document.createElement('option');
     autoOpt.value = 'AUTO';
@@ -686,10 +1006,13 @@ class FalconApp {
       webSerialOpt.value = 'WEB_SERIAL';
       webSerialOpt.textContent = '⚡ Web Serial USB (Direct Browser)';
       this.portSelect.appendChild(webSerialOpt);
+    }
 
-      if (!isLocalhost && !autoSelected) {
-        this.portSelect.value = 'AUTO';
-      }
+    // Preserve selection or default to Virtual Machine
+    if (this.isVirtualConnected) {
+      this.portSelect.value = 'VIRTUAL';
+    } else if (!autoSelected) {
+      this.portSelect.value = 'VIRTUAL';
     }
   }
 
@@ -740,59 +1063,215 @@ class FalconApp {
   }
 
   async toggleConnect() {
-    const port = this.portSelect.value || 'AUTO';
-    if (this.btnConnect.textContent === 'Connect' || this.btnConnect.textContent === 'Local Bridge') {
-      this.log(`Connecting to ${port}...`);
-      try {
-        const res = await fetch('/api/connect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ port })
-        });
-        const data = await res.json();
-        if (data.success) {
-          this.log(`Successfully connected to ${data.connected_port || port}!`);
-          this.btnConnect.textContent = 'Disconnect';
-          this.btnConnect.classList.add('btn-active');
-          this.statusBadge.className = 'status-badge active';
-          this.statusText.textContent = 'CONNECTED';
-        } else {
-          this.log(`Failed to connect to ${port}. Make sure 24V power and USB cable are plugged in.`);
-        }
-      } catch (e) {
-        this.log(`Connection error: ${e.message}. If using standalone web app, click '⚡ USB Connect'.`);
+    const target = this.portSelect.value || 'VIRTUAL';
+
+    // If currently connected (virtual or physical), handle disconnect
+    if (this.btnConnect.textContent === 'Disconnect') {
+      if (this.isVirtualConnected) {
+        this.disconnectVirtualMachine();
+        return;
       }
-    } else {
+      if (this.serialController && this.serialController.isConnected) {
+        await this.serialController.disconnect();
+        this.btnConnect.textContent = 'Connect';
+        this.btnConnect.classList.remove('btn-active');
+        this.statusBadge.className = 'status-badge disconnected';
+        this.statusText.textContent = 'DISCONNECTED';
+        this.log('Web Serial USB disconnected.');
+        return;
+      }
       try {
         await fetch('/api/disconnect', { method: 'POST' });
       } catch (e) {}
-      this.btnConnect.textContent = 'Local Bridge';
+      this.btnConnect.textContent = 'Connect';
       this.btnConnect.classList.remove('btn-active');
       this.statusBadge.className = 'status-badge disconnected';
       this.statusText.textContent = 'DISCONNECTED';
       this.log('Disconnected from Falcon.');
+      return;
     }
+
+    // Connect to chosen target
+    if (target === 'VIRTUAL') {
+      this.connectVirtualMachine();
+      return;
+    }
+
+    if (target === 'WEB_SERIAL') {
+      await this.connectWebSerial();
+      return;
+    }
+
+    // Physical COM port or AUTO via local bridge
+    this.log(`Connecting to ${target}...`);
+    try {
+      const res = await fetch('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: target })
+      });
+      const data = await res.json();
+      if (data.success) {
+        this.log(`Successfully connected to physical Falcon on ${data.connected_port || target}!`);
+        this.btnConnect.textContent = 'Disconnect';
+        this.btnConnect.classList.add('btn-active');
+        this.statusBadge.className = 'status-badge active';
+        this.statusText.textContent = 'CONNECTED';
+      } else {
+        this.log(`Failed to connect to ${target}. Make sure 24V power and USB cable are plugged in.`);
+      }
+    } catch (e) {
+      this.log(`Connection error: ${e.message}`);
+    }
+  }
+
+  async connectWebSerial() {
+    try {
+      await this.serialController.connect(115200);
+      this.btnConnect.textContent = 'Disconnect';
+      this.btnConnect.classList.add('btn-active');
+      this.statusBadge.className = 'status-badge active';
+      this.statusText.textContent = 'USB CONNECTED';
+      this.log('Connected to Falcon 5W via Web Serial USB!');
+    } catch (err) {
+      this.log(`Web Serial: ${err.message}`);
+    }
+  }
+
+  // ==========================================
+  // VIRTUAL FALCON MACHINE & GATED SUBSTRATE SIMULATION
+  // ==========================================
+  toggleVirtualMachine() {
+    if (this.isVirtualConnected) {
+      this.disconnectVirtualMachine();
+    } else {
+      this.connectVirtualMachine();
+    }
+  }
+
+  connectVirtualMachine() {
+    this.isVirtualConnected = true;
+
+    // Update Status HUD
+    this.statusBadge.className = 'status-badge active virtual-active';
+    this.statusText.textContent = '🟢 VIRTUAL FALCON ONLINE';
+    if (this.hudCoords) this.hudCoords.textContent = 'X: 0.00 | Y: 0.00 (Sim)';
+    const curSpeed = this.simInputSpeed ? this.simInputSpeed.value : '900';
+    const curPower = this.simInputPower ? this.simInputPower.value : '280';
+    if (this.hudFeedPower) this.hudFeedPower.textContent = `F: ${curSpeed} | S: ${curPower}`;
+
+    // Update Header Buttons
+    this.btnConnect.textContent = 'Disconnect';
+    this.btnConnect.classList.add('btn-active');
+    if (this.portSelect) this.portSelect.value = 'VIRTUAL';
+
+    // REVEAL VIRTUAL SIMULATION TAB AND SWITCH TO IT
+    if (this.tabSimulation) {
+      this.tabSimulation.classList.remove('hidden');
+    }
+    this.switchTab('simulation');
+
+    // Update workflow stepper for virtual simulation mode
+    if (this.step4Title) this.step4Title.textContent = 'Virtual Simulation';
+    if (this.step4Sub) this.step4Sub.textContent = 'Wood • Acrylic • Glass • Metal';
+
+    // ENABLE PROCEED TO VIRTUAL ENGRAVE BUTTON
+    if (this.btnProceedVirtualEngrave) {
+      this.btnProceedVirtualEngrave.disabled = false;
+    }
+
+    // Sync simulator with current workpiece / toolpaths
+    if (this.simulator) {
+      this.syncSimulatorWithWorkpiece();
+      this.simulator.render();
+    }
+
+    this.log('🎮 Connected to Virtual Falcon Machine! Virtual Simulation tab unlocked.');
+  }
+
+  disconnectVirtualMachine() {
+    this.isVirtualConnected = false;
+    if (this.simulator) this.simulator.pause();
+
+    // Reset Status HUD
+    this.statusBadge.className = 'status-badge disconnected';
+    this.statusText.textContent = 'DISCONNECTED';
+    if (this.hudCoords) this.hudCoords.textContent = 'X: 0.00 | Y: 0.00';
+    if (this.hudFeedPower) this.hudFeedPower.textContent = 'F: 0 | S: 0';
+
+    // Reset Buttons
+    this.btnConnect.textContent = 'Connect';
+    this.btnConnect.classList.remove('btn-active');
+
+    // HIDE VIRTUAL SIMULATION TAB AND RETURN TO 2D BED MAP
+    if (this.tabSimulation) {
+      this.tabSimulation.classList.add('hidden');
+    }
+    this.switchTab('bedMap');
+
+    // Reset workflow stepper for standard mode
+    if (this.step4Title) this.step4Title.textContent = 'Toolpath & Safety';
+    if (this.step4Sub) this.step4Sub.textContent = 'Pre-Flight & Parameter Check';
+
+    // DISABLE PROCEED BUTTON
+    if (this.btnProceedVirtualEngrave) {
+      this.btnProceedVirtualEngrave.disabled = true;
+    }
+
+    this.log('Virtual Falcon Machine disconnected.');
+  }
+
+  proceedToVirtualEngrave() {
+    if (!this.isVirtualConnected) {
+      this.connectVirtualMachine();
+      return;
+    }
+
+    // Ensure we are on the simulation tab
+    this.switchTab('simulation');
+
+    // Ensure toolpaths are loaded into simulator
+    if (!this.simulator.segments || this.simulator.segments.length === 0) {
+      if (this.currentPaths && this.currentPaths.length > 0) {
+        const feed = parseFloat(this.inputSpeed ? this.inputSpeed.value : 900) || 900;
+        const power = parseInt(this.inputPower ? this.inputPower.value : 280) || 280;
+        this.simulator.loadNormalizedToolpaths(this.currentPaths, feed, power);
+      } else {
+        // Automatically load default Chittur 4cm keychain preset so user sees instant action!
+        this.loadPreset('chittur_4cm');
+        setTimeout(() => {
+          this.switchTab('simulation');
+          this.simulator.reset();
+          this.simulator.play();
+          if (this.btnSimPlay) this.btnSimPlay.disabled = true;
+          if (this.btnSimPause) this.btnSimPause.disabled = false;
+        }, 150);
+        return;
+      }
+    }
+
+    // Reset timeline and start simulation playback
+    this.simulator.reset();
+    this.simulator.play();
+
+    if (this.btnSimPlay) this.btnSimPlay.disabled = true;
+    if (this.btnSimPause) this.btnSimPause.disabled = false;
+
+    if (this.jobLinesText) this.jobLinesText.textContent = `Virtual Job: ${this.simulator.segments.length} segments`;
+    const matName = this.simulator.materials[this.simulator.currentMaterial]?.name || 'Substrate';
+    this.log(`🚀 Virtual engraving started on ${matName}! Laser carriage is moving at ${this.simulator.speedMultiplier}x speed.`);
   }
 
   async toggleWebSerial() {
     if (this.serialController.isConnected) {
       await this.serialController.disconnect();
-      this.btnWebSerial.textContent = "⚡ USB Connect";
-      this.btnWebSerial.classList.remove("btn-active");
+      this.btnConnect.textContent = 'Connect';
+      this.btnConnect.classList.remove('btn-active');
       this.statusBadge.className = 'status-badge disconnected';
       this.statusText.textContent = 'DISCONNECTED';
-      this.log("USB disconnected.");
+      this.log('USB disconnected.');
     } else {
-      try {
-        await this.serialController.connect(115200);
-        this.btnWebSerial.textContent = "⚡ Disconnect USB";
-        this.btnWebSerial.classList.add("btn-active");
-        this.statusBadge.className = 'status-badge active';
-        this.statusText.textContent = 'USB CONNECTED';
-        this.log("Connected to Falcon 5W via Web Serial API!");
-      } catch (err) {
-        this.log(`Web Serial: ${err.message}`);
-      }
+      await this.connectWebSerial();
     }
   }
 
@@ -908,6 +1387,19 @@ class FalconApp {
         this.visualizer.setToolpaths(data.norm_paths);
         this.jobLinesText.textContent = `Line: 0 / ${data.line_count}`;
         this.btnStartJob.disabled = false;
+
+        // Populate and reveal fileLoadedInfo on left sidebar
+        this.currentPresetId = `bed_scale_${data.size_mm}`;
+        if (this.loadedFileName) {
+          this.loadedFileName.textContent = `Bed Reference Scale (${data.size_mm}×${data.size_mm} mm)`;
+        }
+        if (this.loadedFileMeta) {
+          this.loadedFileMeta.textContent = `${data.line_count} lines • ${data.material_name}`;
+        }
+        if (this.fileLoadedInfo) {
+          this.fileLoadedInfo.classList.remove('hidden');
+        }
+        this.updateSelectionUI(true);
 
         this.switchTab('bedMap');
         this.log(`Bed Scale ready: ${data.line_count} lines on ${data.material_name}. ${data.safety_note}`);
@@ -1157,30 +1649,345 @@ class FalconApp {
     this.loadedFileMeta.textContent = `${(file.size / 1024).toFixed(1)} KB • ${file.type || 'file'}`;
     this.fileLoadedInfo.classList.remove('hidden');
 
-    if (file.name.toLowerCase().endsWith('.svg')) {
+    const nameLower = file.name.toLowerCase();
+
+    // 1. STL 3D Mesh Files (.stl)
+    if (nameLower.endsWith('.stl')) {
+      this.log(`Loading 3D STL mesh: ${file.name}...`);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const buffer = e.target.result;
+          const result = StlGcodeLoader.parseStl(buffer, 512);
+          const b = result.bounds;
+
+          this.fileBase64 = result.heightmapDataUrl;
+          this.imgOriginalPreview.src = this.fileBase64;
+          this.imgOriginalPreview.classList.remove('hidden');
+          this.placeholderOriginal.classList.add('hidden');
+          this.loadedFileMeta.textContent = `${b.triangleCount} Triangles • ${b.width.toFixed(1)}×${b.height.toFixed(1)}×${b.depth.toFixed(1)} mm`;
+
+          // Scale dimensions onto workpiece
+          this.aspectRatio = b.width / b.height;
+          const fitW = Math.min(80.0, Math.max(20.0, b.width));
+          this.inputWidth.value = fitW.toFixed(1);
+          this.inputHeight.value = (fitW / this.aspectRatio).toFixed(1);
+
+          this.visualizer.setWorkpiece(
+            parseFloat(this.inputX.value),
+            parseFloat(this.inputY.value),
+            parseFloat(this.inputWidth.value),
+            parseFloat(this.inputHeight.value),
+            0.0,
+            true
+          );
+
+          // Update Simulator
+          if (this.simulator) {
+            this.simulator.setWorkpiece(
+              parseFloat(this.inputWidth.value),
+              parseFloat(this.inputHeight.value),
+              'rect'
+            );
+          }
+
+          // Switch to Photo Studio in raster mode for 2.5D relief dithering
+          this.setMode('raster');
+          this.switchTab('photoStudio');
+          this.previewRasterDither();
+          this.log(`3D STL mesh loaded: ${b.triangleCount} triangles. 2.5D heightmap relief ready!`);
+          this.saveState(`Load 3D STL (${file.name})`);
+          this.setWorkflowStep(2);
+        } catch (err) {
+          alert(`Error loading STL: ${err.message}`);
+          this.log(`STL load error: ${err.message}`);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
+    // 2. GRBL G-Code Files (.gcode, .nc, .gc, .txt)
+    if (nameLower.endsWith('.gcode') || nameLower.endsWith('.nc') || nameLower.endsWith('.gc') || (nameLower.endsWith('.txt') && !nameLower.includes('readme'))) {
+      this.log(`Ingesting GRBL G-code toolpath: ${file.name}...`);
+      const text = await file.text();
+      try {
+        const parsed = StlGcodeLoader.parseGcode(text);
+        this.currentActiveGcode = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        this.currentPaths = parsed.polylines;
+        this.aspectRatio = parsed.bounds.width / parsed.bounds.height;
+
+        this.inputWidth.value = parsed.bounds.width.toFixed(1);
+        this.inputHeight.value = parsed.bounds.height.toFixed(1);
+        this.inputX.value = parsed.bounds.centerX.toFixed(1);
+        this.inputY.value = parsed.bounds.centerY.toFixed(1);
+
+        this.visualizer.setWorkpiece(
+          parsed.bounds.centerX,
+          parsed.bounds.centerY,
+          parsed.bounds.width,
+          parsed.bounds.height,
+          0.0,
+          true
+        );
+        this.visualizer.setToolpaths(this.currentPaths, true);
+
+        // Load segments directly into virtual material simulator
+        if (this.simulator) {
+          this.simulator.setWorkpiece(parsed.bounds.width, parsed.bounds.height, 'rect');
+          this.simulator.loadGcodeSegments(parsed.segments);
+        }
+
+        this.loadedFileMeta.textContent = `${parsed.lineCount} Lines • ${(parsed.totalCutDist / 1000).toFixed(1)}m Cut • ETA: ${Math.round(parsed.estimatedTimeSec / 60)}m`;
+        this.jobLinesText.textContent = `Line: 0 / ${parsed.lineCount}`;
+        this.btnStartJob.disabled = false;
+
+        this.switchTab('simulation');
+        this.log(`G-code toolpath ready: ${parsed.lineCount} lines, ${parsed.totalCutDist}mm cut distance.`);
+        this.saveState(`Load G-Code (${file.name})`);
+        this.setWorkflowStep(4);
+        this.runJobAudit();
+      } catch (err) {
+        alert(`Error parsing G-code: ${err.message}`);
+        this.log(`G-code parse error: ${err.message}`);
+      }
+      return;
+    }
+
+    // 3. SVG Vector Files (.svg)
+    if (nameLower.endsWith('.svg')) {
       const text = await file.text();
       this.svgXml = text;
       this.parseSvg(text);
-    } else {
-      // PNG/JPG
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        this.fileBase64 = e.target.result;
-        this.imgOriginalPreview.src = this.fileBase64;
-        this.imgOriginalPreview.classList.remove('hidden');
-        this.placeholderOriginal.classList.add('hidden');
-        
-        // Auto-process
-        if (this.currentMode === 'vector') {
-          this.switchTab('photoStudio');
-          this.processPhotoLineArt();
-        } else {
-          this.switchTab('photoStudio');
-          this.previewRasterDither();
-        }
-      };
-      reader.readAsDataURL(file);
+      this.setWorkflowStep(3);
+      return;
     }
+
+    // 4. Standard Images (PNG, JPG, BMP, WebP)
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      this.fileBase64 = e.target.result;
+      this.imgOriginalPreview.src = this.fileBase64;
+      this.imgOriginalPreview.classList.remove('hidden');
+      this.placeholderOriginal.classList.add('hidden');
+      
+      // Auto-process
+      if (this.currentMode === 'vector') {
+        this.switchTab('photoStudio');
+        this.processPhotoLineArt();
+      } else {
+        this.switchTab('photoStudio');
+        this.previewRasterDither();
+      }
+      this.setWorkflowStep(2);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  setWorkflowStep(stepNum) {
+    this.currentWorkflowStep = stepNum;
+    if (this.workflowStepItems) {
+      this.workflowStepItems.forEach(item => {
+        const s = parseInt(item.getAttribute('data-step')) || 1;
+        item.classList.toggle('active', s === stepNum);
+      });
+    }
+  }
+
+  navigateToWorkflowStep(stepNum) {
+    this.setWorkflowStep(stepNum);
+    switch (stepNum) {
+      case 1:
+        if (this.fileInput) this.fileInput.click();
+        break;
+      case 2:
+        this.switchTab('photoStudio');
+        break;
+      case 3:
+        this.switchTab('bedMap');
+        break;
+      case 4:
+        if (!this.isVirtualConnected) {
+          this.connectVirtualMachine();
+        } else {
+          this.switchTab('simulation');
+        }
+        break;
+      case 5:
+        const liveMonitor = document.querySelector('.highlight-card');
+        if (liveMonitor) liveMonitor.scrollIntoView({ behavior: 'smooth' });
+        this.log('Step 5: Review machine status & click START ENGRAVE.');
+        break;
+    }
+  }
+
+  setSimulationMaterial(matKey) {
+    if (this.simulator) {
+      this.simulator.setMaterial(matKey);
+      if (this.simMaterialButtons) {
+        this.simMaterialButtons.forEach(btn => {
+          btn.classList.toggle('active', btn.getAttribute('data-sim-material') === matKey);
+        });
+      }
+      if (this.simActiveMaterialLabel) {
+        this.simActiveMaterialLabel.textContent = `Substrate: ${this.simulator.materials[matKey].name}`;
+      }
+
+      // Recommend calibrated laser parameters for selected material
+      const rec = this.simulator.materials[matKey];
+      if (rec) {
+        if (this.simInputSpeed) this.simInputSpeed.value = rec.recommendedSpeed;
+        if (this.simInputPower) this.simInputPower.value = rec.recommendedPower;
+        this.updateSimulationLaserParams();
+        this.log(`Applied calibrated parameters for ${rec.name}: Speed ${rec.recommendedSpeed} mm/min, Power S${rec.recommendedPower}.`);
+      }
+    }
+  }
+
+  updateSimulationLaserParams() {
+    const speed = parseFloat(this.simInputSpeed ? this.simInputSpeed.value : 900) || 900;
+    const power = parseInt(this.simInputPower ? this.simInputPower.value : 280) || 280;
+    const passes = parseInt(this.simInputPasses ? this.simInputPasses.value : 1) || 1;
+
+    // Sync with hardware inputs in right sidebar
+    if (this.inputSpeed) this.inputSpeed.value = speed;
+    if (this.inputPower) this.inputPower.value = power;
+    if (this.inputPasses) this.inputPasses.value = passes;
+
+    // Update power percentage and wattage badge (Falcon 5W: 1000 S = 5.0W optical)
+    if (this.simPowerPctTag) {
+      const pct = Math.round(power / 10);
+      const watts = (power * 0.005).toFixed(1);
+      this.simPowerPctTag.textContent = `${pct}% • ${watts}W`;
+    }
+
+    if (this.hudFeedPower && this.isVirtualConnected) {
+      this.hudFeedPower.textContent = `F: ${speed} | S: ${power}`;
+    }
+
+    if (this.simulator) {
+      this.simulator.setLaserParameters(speed, power, passes);
+    }
+  }
+
+  syncSimulatorWithWorkpiece() {
+    if (!this.simulator) return;
+    const artW = parseFloat(this.inputWidth.value) || 35.0;
+    const artH = parseFloat(this.inputHeight.value) || 35.0;
+    const subW = this.simMaterialWidth ? (parseFloat(this.simMaterialWidth.value) || 100.0) : 100.0;
+    const subH = this.simMaterialHeight ? (parseFloat(this.simMaterialHeight.value) || 100.0) : 100.0;
+    const shape = this.btnSimShapeRound && this.btnSimShapeRound.classList.contains('active') ? 'round' : 'rect';
+
+    this.simulator.setWorkpiece(subW, subH, shape);
+    this.simulator.setArtworkDimensions(artW, artH);
+
+    if (this.currentPaths && this.currentPaths.length > 0) {
+      const feed = this.simInputSpeed ? (parseFloat(this.simInputSpeed.value) || 900) : (parseFloat(this.inputSpeed.value) || 900);
+      const power = this.simInputPower ? (parseInt(this.simInputPower.value) || 280) : (parseInt(this.inputPower.value) || 280);
+      this.simulator.loadNormalizedToolpaths(this.currentPaths, feed, power, artW, artH);
+    }
+    this.updateSimulationWatermark();
+  }
+
+  setSimulationSubstrateShape(shape) {
+    if (this.btnSimShapeRound) this.btnSimShapeRound.classList.toggle('active', shape === 'round');
+    if (this.btnSimShapeRect) this.btnSimShapeRect.classList.toggle('active', shape === 'rect');
+    const w = this.simMaterialWidth ? (parseFloat(this.simMaterialWidth.value) || 100.0) : 100.0;
+    const h = this.simMaterialHeight ? (parseFloat(this.simMaterialHeight.value) || 100.0) : 100.0;
+    if (this.simulator) {
+      this.simulator.setWorkpiece(w, h, shape);
+      this.updateSimulationWatermark();
+    }
+  }
+
+  updateSimulationSubstrateSize() {
+    const w = Math.max(5, this.simMaterialWidth ? (parseFloat(this.simMaterialWidth.value) || 100.0) : 100.0);
+    const h = Math.max(5, this.simMaterialHeight ? (parseFloat(this.simMaterialHeight.value) || 100.0) : 100.0);
+    const shape = this.btnSimShapeRound && this.btnSimShapeRound.classList.contains('active') ? 'round' : 'rect';
+    if (this.simulator) {
+      this.simulator.setWorkpiece(w, h, shape);
+      this.updateSimulationWatermark();
+    }
+  }
+
+  setSimulationSubstrateDimensions(w, h, shape) {
+    if (this.simMaterialWidth) this.simMaterialWidth.value = w;
+    if (this.simMaterialHeight) this.simMaterialHeight.value = h;
+    this.setSimulationSubstrateShape(shape);
+  }
+
+  updateSimulationWatermark() {
+    if (!this.simulator || !this.simActiveMaterialLabel) return;
+    const shapeName = this.simulator.workpiece.shape === 'round' ? 'Round' : 'Rect';
+    const matObj = this.simulator.materials[this.simulator.currentMaterial];
+    const matName = matObj ? matObj.name : (this.simulator.currentMaterial.charAt(0).toUpperCase() + this.simulator.currentMaterial.slice(1));
+    this.simActiveMaterialLabel.textContent = `Substrate: ${matName} (${Math.round(this.simulator.workpiece.width)}×${Math.round(this.simulator.workpiece.height)} mm • ${shapeName})`;
+  }
+
+  runJobAudit() {
+    const w = parseFloat(this.inputWidth.value) || 40.0;
+    const h = parseFloat(this.inputHeight.value) || 40.0;
+    const cx = parseFloat(this.inputX.value) || 200.0;
+    const cy = parseFloat(this.inputY.value) || 207.5;
+
+    const bounds = {
+      minX: cx - w / 2,
+      maxX: cx + w / 2,
+      minY: cy - h / 2,
+      maxY: cy + h / 2,
+      width: w,
+      height: h,
+      centerX: cx,
+      centerY: cy
+    };
+
+    const segments = (this.simulator && this.simulator.segments.length > 0) ? this.simulator.segments : [];
+    const mat = (this.simulator ? this.simulator.currentMaterial : 'wood') || 'wood';
+
+    const auditResult = JobAuditor.auditJob({
+      bounds: bounds,
+      segments: segments,
+      material: mat,
+      bedWidth: 400.0,
+      bedHeight: 415.0
+    });
+
+    // Populate modal
+    if (this.auditSummaryBanner) {
+      this.auditSummaryBanner.className = `audit-summary-banner ${auditResult.overallStatus.toLowerCase()}`;
+      if (this.auditSummaryIcon) {
+        this.auditSummaryIcon.textContent = auditResult.overallStatus === 'PASS' ? '✅' : (auditResult.overallStatus === 'WARNING' ? '⚠️' : '❌');
+      }
+      if (this.auditSummaryText) {
+        this.auditSummaryText.textContent = auditResult.summary;
+      }
+    }
+
+    if (this.auditChecklist) {
+      this.auditChecklist.innerHTML = '';
+      auditResult.checks.forEach(chk => {
+        const item = document.createElement('div');
+        item.className = `audit-check-item ${chk.status}`;
+        const icon = chk.status === 'pass' ? '✅' : (chk.status === 'warning' ? '⚠️' : '❌');
+        item.innerHTML = `
+          <span class="audit-item-icon">${icon}</span>
+          <div class="audit-item-body">
+            <strong>${chk.title}</strong>
+            <span>${chk.message}</span>
+          </div>
+        `;
+        this.auditChecklist.appendChild(item);
+      });
+    }
+
+    if (this.btnAuditAutoFit) {
+      this.btnAuditAutoFit.classList.toggle('hidden', auditResult.overallStatus !== 'ERROR');
+    }
+
+    if (this.modalAudit) {
+      this.modalAudit.classList.remove('hidden');
+    }
+    this.log(`Pre-Flight Job Audit: ${auditResult.overallStatus} (${auditResult.checks.length} checks performed).`);
   }
 
   clearFile() {
@@ -1238,6 +2045,12 @@ class FalconApp {
           true
         );
         this.visualizer.setToolpaths(this.currentPaths, true);
+        if (this.simulator) {
+          const feed = parseFloat(this.inputSpeed.value) || 900;
+          const power = parseInt(this.inputPower.value) || 280;
+          this.simulator.setWorkpiece(w, parseFloat(this.inputHeight.value), 'rect');
+          this.simulator.loadNormalizedToolpaths(this.currentPaths, feed, power);
+        }
         this.switchTab('bedMap');
         this.log(`SVG loaded: ${data.path_count} vector paths extracted!`);
         this.saveState(`Load SVG (${this.currentFile ? this.currentFile.name : 'Vector Artwork'})`);
@@ -1318,6 +2131,12 @@ class FalconApp {
           true
         );
         this.visualizer.setToolpaths(this.currentPaths, true);
+        if (this.simulator) {
+          const feed = parseFloat(this.inputSpeed.value) || 900;
+          const power = parseInt(this.inputPower.value) || 280;
+          this.simulator.setWorkpiece(w, parseFloat(this.inputHeight.value), 'rect');
+          this.simulator.loadNormalizedToolpaths(this.currentPaths, feed, power);
+        }
         this.log(`Converted to line art: ${data.path_count} paths generated.`);
         this.saveState(`Convert Photo (${this.filterAlgorithm.value})`);
       }
@@ -1389,6 +2208,7 @@ class FalconApp {
   }
 
   parseGcodeToolpaths(lines) {
+    if (!lines || lines.length === 0) return [];
     const rawPolys = [];
     let cur = [];
     let curX = 0, curY = 0;
@@ -1397,28 +2217,68 @@ class FalconApp {
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i].trim();
       if (!l || l.startsWith(';')) continue;
-      const xMatch = l.match(/X([0-9.-]+)/i);
-      const yMatch = l.match(/Y([0-9.-]+)/i);
-      if (xMatch) curX = parseFloat(xMatch[1]);
-      if (yMatch) curY = parseFloat(yMatch[1]);
+
+      if (l.includes('M5')) {
+        if (cur.length > 1) rawPolys.push(cur);
+        cur = [];
+      }
+
+      const xMatch = l.match(/X([-+]?[0-9.]+)/i);
+      const yMatch = l.match(/Y([-+]?[0-9.]+)/i);
+      const targetX = xMatch ? parseFloat(xMatch[1]) : curX;
+      const targetY = yMatch ? parseFloat(yMatch[1]) : curY;
 
       if (l.startsWith('G0')) {
         if (cur.length > 1) rawPolys.push(cur);
-        cur = [[curX, curY]];
+        cur = [];
+        curX = targetX;
+        curY = targetY;
       } else if (l.startsWith('G1')) {
         if (cur.length === 0) cur.push([curX, curY]);
-        cur.push([curX, curY]);
-        minX = Math.min(minX, curX);
-        maxX = Math.max(maxX, curX);
-        minY = Math.min(minY, curY);
-        maxY = Math.max(maxY, curY);
+        cur.push([targetX, targetY]);
+        minX = Math.min(minX, curX, targetX);
+        maxX = Math.max(maxX, curX, targetX);
+        minY = Math.min(minY, curY, targetY);
+        maxY = Math.max(maxY, curY, targetY);
+        curX = targetX;
+        curY = targetY;
+      } else if (l.startsWith('G2') || l.startsWith('G3')) {
+        const iMatch = l.match(/I([-+]?[0-9.]+)/i);
+        const jMatch = l.match(/J([-+]?[0-9.]+)/i);
+        const iVal = iMatch ? parseFloat(iMatch[1]) : 0.0;
+        const jVal = jMatch ? parseFloat(jMatch[1]) : 0.0;
+        const cx = curX + iVal;
+        const cy = curY + jVal;
+        const r = Math.hypot(iVal, jVal);
+        let startAng = Math.atan2(curY - cy, curX - cx);
+        let endAng = Math.atan2(targetY - cy, targetX - cx);
+        const isCw = l.startsWith('G2');
+        if (isCw) {
+          if (endAng >= startAng) endAng -= 2 * Math.PI;
+        } else {
+          if (endAng <= startAng) endAng += 2 * Math.PI;
+        }
+        const steps = Math.max(6, Math.round(Math.abs(endAng - startAng) / (2 * Math.PI) * 36));
+        if (cur.length === 0) cur.push([curX, curY]);
+        for (let s = 1; s <= steps; s++) {
+          const ang = startAng + (endAng - startAng) * (s / steps);
+          const px = cx + r * Math.cos(ang);
+          const py = cy + r * Math.sin(ang);
+          cur.push([px, py]);
+          minX = Math.min(minX, px);
+          maxX = Math.max(maxX, px);
+          minY = Math.min(minY, py);
+          maxY = Math.max(maxY, py);
+        }
+        curX = targetX;
+        curY = targetY;
       }
     }
     if (cur.length > 1) rawPolys.push(cur);
     if (rawPolys.length === 0 || !isFinite(minX)) return [];
 
-    const spanX = Math.max(1, maxX - minX);
-    const spanY = Math.max(1, maxY - minY);
+    const spanX = Math.max(1e-4, maxX - minX);
+    const spanY = Math.max(1e-4, maxY - minY);
     const normPaths = [];
     for (const poly of rawPolys) {
       normPaths.push(poly.map(pt => [
@@ -1434,11 +2294,12 @@ class FalconApp {
     this.log(`Loading preset: ${presetId}...`);
 
     const presetMeta = {
-      'chittur_4cm': { file: 'presets/keychain_4cm_vector.gcode', w: 35.0, h: 35.0, speed: 900, power: 280 },
-      'chittur_10cm': { file: 'presets/keychain_10cm_vector.gcode', w: 90.0, h: 90.0, speed: 1000, power: 320 },
-      'bed_scale_200mm': { file: 'presets/black_glass_bed_scale.gcode', w: 200.0, h: 200.0, speed: 800, power: 450 }
+      'chittur_4cm': { file: 'presets/keychain_4cm_vector.gcode', w: 35.0, h: 35.0, wpW: 40.0, wpH: 40.0, shape: 'round', speed: 900, power: 280 },
+      'chittur_10cm': { file: 'presets/keychain_10cm_vector.gcode', w: 90.0, h: 90.0, wpW: 100.0, wpH: 100.0, shape: 'round', speed: 1000, power: 320 },
+      'bed_scale_200mm': { file: 'presets/black_glass_bed_scale.gcode', w: 200.0, h: 200.0, wpW: 200.0, wpH: 200.0, shape: 'rect', speed: 800, power: 450 },
+      'bed_scale_380mm': { file: null, w: 380.0, h: 380.0, wpW: 380.0, wpH: 380.0, shape: 'rect', speed: 1000, power: 400 }
     };
-    const info = presetMeta[presetId] || { file: 'presets/keychain_4cm_vector.gcode', w: 35.0, h: 35.0, speed: 900, power: 280 };
+    const info = presetMeta[presetId] || { file: 'presets/keychain_4cm_vector.gcode', w: 35.0, h: 35.0, wpW: 40.0, wpH: 40.0, shape: 'round', speed: 900, power: 280 };
 
     this.inputWidth.value = String(info.w);
     this.inputHeight.value = String(info.h);
@@ -1446,7 +2307,9 @@ class FalconApp {
     this.inputPower.value = String(info.power);
     if (this.inputRotation) this.inputRotation.value = "0.0";
 
-    let loadedLines = null;
+    let loadedPaths = null;
+    let lineCount = 0;
+
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
     if (isLocalhost) {
@@ -1459,41 +2322,80 @@ class FalconApp {
         if (res.ok) {
           const data = await res.json();
           if (data.success) {
-            this.log(`Preset loaded on local bridge (${data.line_count} lines).`);
+            lineCount = data.line_count || 0;
+            if (data.norm_paths && data.norm_paths.length > 0) {
+              loadedPaths = data.norm_paths;
+            }
+            if (data.w) {
+              info.w = data.w;
+              info.h = data.h;
+              this.inputWidth.value = String(data.w);
+              this.inputHeight.value = String(data.h);
+            }
+            if (data.workpiece_w) {
+              info.wpW = data.workpiece_w;
+              info.wpH = data.workpiece_h;
+            }
+            if (data.shape) info.shape = data.shape;
+            if (data.speed) {
+              info.speed = data.speed;
+              this.inputSpeed.value = String(data.speed);
+            }
+            if (data.power) {
+              info.power = data.power;
+              this.inputPower.value = String(data.power);
+            }
+            this.log(`Preset loaded on local bridge (${data.line_count} lines, ${loadedPaths ? loadedPaths.length : 0} toolpaths).`);
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('Bridge preset load failed:', e);
+      }
     }
 
-    try {
-      const gRes = await fetch(info.file);
-      if (gRes.ok) {
-        const text = await gRes.text();
-        loadedLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    if (!loadedPaths && info.file) {
+      try {
+        const gRes = await fetch(info.file);
+        if (gRes.ok) {
+          const text = await gRes.text();
+          const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+          lineCount = lines.length;
+          this.currentActiveGcode = lines;
+          loadedPaths = this.parseGcodeToolpaths(lines);
+        }
+      } catch (e) {
+        console.warn('Static preset file fetch failed:', e);
       }
-    } catch (e) {}
+    }
 
-    if (loadedLines && loadedLines.length > 0) {
-      this.currentActiveGcode = loadedLines;
-      this.jobLinesText.textContent = `Line: 0 / ${loadedLines.length}`;
-      this.btnStartJob.disabled = false;
-      const paths = this.parseGcodeToolpaths(loadedLines);
-      if (paths && paths.length > 0) {
-        this.currentPaths = paths;
-        this.visualizer.setToolpaths(paths, true);
+    if (loadedPaths && loadedPaths.length > 0) {
+      this.currentPaths = loadedPaths;
+      this.visualizer.setToolpaths(loadedPaths, true);
+      if (this.simulator) {
+        const shape = info.shape || 'round';
+        this.simulator.setWorkpiece(info.wpW, info.wpH, shape);
+        this.simulator.loadNormalizedToolpaths(loadedPaths, info.speed, info.power, info.w, info.h);
       }
-      this.log(`Preset ${presetId} ready: ${loadedLines.length} G-code lines loaded!`);
+      this.log(`Preset ${presetId} ready: ${loadedPaths.length} toolpaths loaded!`);
     } else {
       this.log(`Preset ${presetId} parameters set.`);
     }
 
+    if (lineCount > 0) {
+      this.jobLinesText.textContent = `Line: 0 / ${lineCount}`;
+      this.btnStartJob.disabled = false;
+    }
+
+    const curX = parseFloat(this.inputX.value) || 200.0;
+    const curY = parseFloat(this.inputY.value) || 207.5;
     this.visualizer.setWorkpiece(
-      parseFloat(this.inputX.value),
-      parseFloat(this.inputY.value),
-      info.w,
-      info.h,
+      curX,
+      curY,
+      info.wpW,
+      info.wpH,
       0.0,
-      true
+      true,
+      info.shape || 'round'
     );
     this.switchTab('bedMap');
     this.saveState(`Load Preset (${presetId})`);
@@ -1885,21 +2787,94 @@ class FalconApp {
   }
 
   // ==========================================
-  // ADD & DELETE CANVAS ITEM
+  // OBJECT SELECTION, DELETE & CLEAR BED
   // ==========================================
-  deleteWorkpiece() {
-    if (!this.visualizer.workpiece.visible && !this.currentFile && (!this.currentPaths || this.currentPaths.length === 0)) {
-      this.log('Canvas is already empty.');
+  toggleSelectObject() {
+    if (!this.visualizer || !this.visualizer.workpiece.visible) {
+      this.log('No object on the bed to select.');
       return;
     }
+    const newSelected = !this.visualizer.workpiece.isSelected;
+    this.visualizer.setSelected(newSelected);
+    this.updateSelectionUI(newSelected);
+    this.log(newSelected ? '🎯 Object selected on 2D Bed Map (handles visible).' : 'Object deselected.');
+  }
+
+  updateSelectionUI(isSelected) {
+    const hasItem = !!(this.visualizer && this.visualizer.workpiece && this.visualizer.workpiece.visible);
+    if (this.btnSelectObject) {
+      if (!hasItem) {
+        this.btnSelectObject.classList.remove('active');
+        this.btnSelectObject.textContent = '🎯 Select Object';
+        this.btnSelectObject.disabled = true;
+      } else if (isSelected) {
+        this.btnSelectObject.classList.add('active');
+        this.btnSelectObject.textContent = '🎯 Deselect Object';
+        this.btnSelectObject.disabled = false;
+      } else {
+        this.btnSelectObject.classList.remove('active');
+        this.btnSelectObject.textContent = '🎯 Select Object';
+        this.btnSelectObject.disabled = false;
+      }
+    }
+    if (this.btnDeleteSelected) {
+      this.btnDeleteSelected.disabled = !hasItem;
+    }
+    if (this.btnDeleteWorkpiece) {
+      this.btnDeleteWorkpiece.disabled = !hasItem;
+    }
+    if (this.btnClearBed) {
+      this.btnClearBed.disabled = !hasItem && (!this.currentPaths || this.currentPaths.length === 0);
+    }
+    if (this.btnClearBedSidebar) {
+      this.btnClearBedSidebar.disabled = !hasItem && (!this.currentPaths || this.currentPaths.length === 0);
+    }
+  }
+
+  deleteSelected() {
+    this.deleteWorkpiece();
+  }
+
+  deleteWorkpiece() {
+    const hasVisible = this.visualizer && this.visualizer.workpiece && this.visualizer.workpiece.visible;
+    const hasPaths = this.currentPaths && this.currentPaths.length > 0;
+    const hasFile = !!this.currentFile;
+    if (!hasVisible && !hasPaths && !hasFile) {
+      this.log('Canvas is already empty. No object to delete.');
+      return;
+    }
+    this.clearBed('Delete Selected Item');
+  }
+
+  clearBed(actionLabel = 'Clear Bed') {
     this.clearFile();
-    this.visualizer.setWorkpiece(200.0, 207.5, 40.0, 40.0, 0.0, false);
-    this.visualizer.setToolpaths([]);
+    this.currentPaths = [];
     this.currentActiveGcode = null;
+    this.currentPresetId = null;
+    this.currentFile = null;
+    this.fileBase64 = null;
+    this.svgXml = null;
+
+    if (this.fileInput) this.fileInput.value = '';
+    if (this.fileLoadedInfo) this.fileLoadedInfo.classList.add('hidden');
+    if (this.loadedFileName) this.loadedFileName.textContent = '';
+    if (this.jobLinesText) this.jobLinesText.textContent = 'Line: 0 / 0';
+    if (this.btnStartJob) this.btnStartJob.disabled = true;
     if (this.inputRotation) this.inputRotation.value = "0.0";
-    this.saveState('Delete Canvas Item');
-    this.queueAutoSave();
-    this.log('Artwork removed from canvas. Bed is now empty.');
+
+    if (this.visualizer) {
+      this.visualizer.setWorkpiece(200.0, 207.5, 40.0, 40.0, 0.0, false);
+      this.visualizer.setToolpaths([]);
+      this.visualizer.setRasterPreview(null);
+      if (this.visualizer.setSelected) {
+        this.visualizer.setSelected(false);
+      }
+    }
+
+    this.updateSelectionUI(false);
+    this.saveState(actionLabel);
+    this.saveToLocalStorage();
+    this.log(actionLabel === 'Clear Bed' ? '🧹 Bed cleared completely. All objects, bed scale grids, and toolpaths removed.' : '🗑 Artwork / scale item removed from bed.');
   }
 
   // ==========================================
@@ -2027,12 +3002,11 @@ class FalconApp {
       }
 
       this.saveState(st.workpiece.visible ? 'Restored Workspace' : 'Initial Clean Bed');
-      if (this.autoSaveIndicator) {
-        this.autoSaveIndicator.textContent = '💾 Session Restored';
-      }
+      this.updateSelectionUI(this.visualizer && this.visualizer.workpiece && this.visualizer.workpiece.isSelected);
     } catch (e) {
       console.warn('[Falcon Studio] Could not restore from localStorage:', e);
       this.saveState('Initial Clean Bed');
+      this.updateSelectionUI(false);
     }
   }
 

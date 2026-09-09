@@ -9,7 +9,9 @@ import sys
 import json
 import base64
 import asyncio
-from typing import Dict, Any, List
+import re
+import math
+from typing import Dict, Any, List, Tuple
 
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, FileResponse, HTMLResponse
@@ -289,25 +291,200 @@ async def api_presets(request):
     ]
     return JSONResponse({"presets": presets})
 
-async def api_load_preset_gcode(request):
-    """Directly load one of our pre-generated master G-code files from D:\\FalconEngraving."""
-    global current_active_gcode
-    data = await request.json()
-    preset_id = data.get("id", "")
+_cached_preset_paths: Dict[str, Any] = {}
+
+def parse_gcode_to_norm_paths(filepath: str) -> Tuple[List[List[List[float]]], float, float]:
+    """Parse G-code file (including G0, G1, G2, G3 arcs) into normalized 0.0-1.0 toolpath polylines."""
+    if filepath in _cached_preset_paths:
+        return _cached_preset_paths[filepath]
+        
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        lines = f.readlines()
     
-    file_map = {
-        "chittur_4cm": r"D:\FalconEngraving\keychain_4cm_vector.gcode",
-        "chittur_10cm": r"D:\FalconEngraving\keychain_10cm_vector.gcode",
-        "bed_scale_200mm": r"D:\FalconEngraving\black_glass_bed_scale.gcode",
+    raw_polys = []
+    curr_poly = []
+    cur_x, cur_y = 0.0, 0.0
+    laser_on = False
+    
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith(';'):
+            continue
+        
+        if 'M3' in line or 'M4' in line:
+            laser_on = True
+        elif 'M5' in line:
+            laser_on = False
+            if len(curr_poly) > 1:
+                raw_polys.append(curr_poly)
+            curr_poly = []
+            
+        x_m = re.search(r'X([-+]?[0-9.]+)', line)
+        y_m = re.search(r'Y([-+]?[0-9.]+)', line)
+        target_x = float(x_m.group(1)) if x_m else cur_x
+        target_y = float(y_m.group(1)) if y_m else cur_y
+        
+        if line.startswith('G0'):
+            if len(curr_poly) > 1:
+                raw_polys.append(curr_poly)
+            curr_poly = []
+            cur_x, cur_y = target_x, target_y
+        elif line.startswith('G1'):
+            if not curr_poly:
+                curr_poly.append((cur_x, cur_y))
+            curr_poly.append((target_x, target_y))
+            cur_x, cur_y = target_x, target_y
+        elif line.startswith('G2') or line.startswith('G3'):
+            i_m = re.search(r'I([-+]?[0-9.]+)', line)
+            j_m = re.search(r'J([-+]?[0-9.]+)', line)
+            i_val = float(i_m.group(1)) if i_m else 0.0
+            j_val = float(j_m.group(1)) if j_m else 0.0
+            cx = cur_x + i_val
+            cy = cur_y + j_val
+            r = math.hypot(i_val, j_val)
+            start_ang = math.atan2(cur_y - cy, cur_x - cx)
+            end_ang = math.atan2(target_y - cy, target_x - cx)
+            is_cw = line.startswith('G2')
+            if is_cw:
+                if end_ang >= start_ang:
+                    end_ang -= 2 * math.pi
+            else:
+                if end_ang <= start_ang:
+                    end_ang += 2 * math.pi
+            steps = max(6, int(abs(end_ang - start_ang) / (2 * math.pi) * 36))
+            if not curr_poly:
+                curr_poly.append((cur_x, cur_y))
+            for s in range(1, steps + 1):
+                ang = start_ang + (end_ang - start_ang) * (s / steps)
+                curr_poly.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+            cur_x, cur_y = target_x, target_y
+
+    if len(curr_poly) > 1:
+        raw_polys.append(curr_poly)
+
+    if not raw_polys:
+        _cached_preset_paths[filepath] = ([], 0.0, 0.0)
+        return [], 0.0, 0.0
+        
+    all_x = [pt[0] for poly in raw_polys for pt in poly]
+    all_y = [pt[1] for poly in raw_polys for pt in poly]
+    min_x, max_x = min(all_x), max(all_x)
+    min_y, max_y = min(all_y), max(all_y)
+    span_x = max(1e-4, max_x - min_x)
+    span_y = max(1e-4, max_y - min_y)
+    
+    norm_paths = []
+    for poly in raw_polys:
+        norm_poly = []
+        for x, y in poly:
+            nx = (x - min_x) / span_x
+            ny = 1.0 - ((y - min_y) / span_y) # SVG/Canvas Y-down: 0 is top
+            norm_poly.append([round(nx, 4), round(ny, 4)])
+        norm_paths.append(norm_poly)
+        
+    res = (norm_paths, span_x, span_y)
+    _cached_preset_paths[filepath] = res
+    return res
+
+async def api_load_preset_gcode(request):
+    """Directly load one of our pre-generated master G-code files with normalized toolpaths."""
+    global current_active_gcode
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    preset_id = data.get("id", "chittur_4cm")
+    
+    preset_meta = {
+        "chittur_4cm": {
+            "name": "Chittur 4cm Keychain",
+            "file": "keychain_4cm_vector.gcode",
+            "w": 35.0, "h": 35.0, "workpiece_w": 40.0, "workpiece_h": 40.0,
+            "shape": "round", "speed": 900, "power": 280
+        },
+        "chittur_10cm": {
+            "name": "Chittur 10cm Plaque",
+            "file": "keychain_10cm_vector.gcode",
+            "w": 90.0, "h": 90.0, "workpiece_w": 100.0, "workpiece_h": 100.0,
+            "shape": "round", "speed": 1000, "power": 320
+        },
+        "bed_scale_200mm": {
+            "name": "200x200 Bed Scale",
+            "file": "black_glass_bed_scale.gcode",
+            "w": 200.0, "h": 200.0, "workpiece_w": 200.0, "workpiece_h": 200.0,
+            "shape": "rect", "speed": 800, "power": 450
+        }
     }
     
-    target_path = file_map.get(preset_id)
-    if target_path and os.path.exists(target_path):
-        with open(target_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        current_active_gcode = lines
-        return JSONResponse({"success": True, "line_count": len(lines), "path": target_path})
-    return JSONResponse({"error": f"Preset file not found for {preset_id}"}, status_code=404)
+    if preset_id == "bed_scale_380mm":
+        res = BedScaleGenerator.generate_grid_gcode(
+            material="glass",
+            size_mm=380.0,
+            origin_mode="front_left",
+            center_x=200.0,
+            center_y=207.5,
+            include_origin_datum=True,
+            include_40mm_targets=True,
+            include_100mm_targets=True,
+            include_rulers=True,
+            include_grid=True,
+            custom_speed=1000.0,
+            custom_power=400
+        )
+        current_active_gcode = res["gcode_lines"]
+        return JSONResponse({
+            "success": True,
+            "id": preset_id,
+            "name": "Full-Bed Calibration Grid (380x380 mm)",
+            "line_count": res["line_count"],
+            "w": 380.0,
+            "h": 380.0,
+            "workpiece_w": 380.0,
+            "workpiece_h": 380.0,
+            "shape": "rect",
+            "speed": 1000,
+            "power": 400,
+            "norm_paths": res["norm_paths"]
+        })
+        
+    meta = preset_meta.get(preset_id)
+    if not meta:
+        return JSONResponse({"error": f"Unknown preset: {preset_id}"}, status_code=404)
+        
+    candidate_paths = [
+        os.path.join(STUDIO_DIR, "presets", meta["file"]),
+        os.path.join(STUDIO_DIR, "frontend", "presets", meta["file"]),
+        os.path.join(r"D:\FalconEngraving", meta["file"])
+    ]
+    target_path = None
+    for cp in candidate_paths:
+        if os.path.exists(cp):
+            target_path = cp
+            break
+            
+    if not target_path:
+        return JSONResponse({"error": f"Preset file not found: {meta['file']}"}, status_code=404)
+        
+    with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = f.readlines()
+    current_active_gcode = lines
+    
+    norm_paths, sx, sy = parse_gcode_to_norm_paths(target_path)
+    
+    return JSONResponse({
+        "success": True,
+        "id": preset_id,
+        "name": meta["name"],
+        "line_count": len(lines),
+        "w": meta["w"],
+        "h": meta["h"],
+        "workpiece_w": meta["workpiece_w"],
+        "workpiece_h": meta["workpiece_h"],
+        "shape": meta["shape"],
+        "speed": meta["speed"],
+        "power": meta["power"],
+        "norm_paths": norm_paths
+    })
 
 # --- WebSocket Telemetry (10Hz) ---
 
@@ -428,6 +605,7 @@ routes = [
     WebSocketRoute("/ws", endpoint=websocket_telemetry),
     Mount("/css", app=StaticFiles(directory=os.path.join(frontend_dir, "css")), name="css"),
     Mount("/js", app=StaticFiles(directory=os.path.join(frontend_dir, "js")), name="js"),
+    Mount("/presets", app=StaticFiles(directory=os.path.join(STUDIO_DIR, "presets")), name="presets"),
     Mount("/static", app=StaticFiles(directory=frontend_dir), name="static")
 ]
 

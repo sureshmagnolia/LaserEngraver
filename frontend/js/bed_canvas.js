@@ -35,6 +35,7 @@ class BedVisualizer {
       height: 40.0,
       rotation: 0.0, // in degrees 0-360
       visible: false, // ONLY visible after loading an SVG/Image/Preset
+      isSelected: true, // Selected by default when visible
       isDragging: false,
       isResizing: false,
       isRotating: false,
@@ -115,6 +116,10 @@ class BedVisualizer {
       this.workpiece.rotation = ((rotation % 360) + 360) % 360;
     }
     this.workpiece.visible = visible;
+    this.workpiece.isSelected = visible;
+    if (this.onSelectionChanged) {
+      this.onSelectionChanged(this.workpiece.isSelected);
+    }
     this.render();
   }
 
@@ -125,6 +130,25 @@ class BedVisualizer {
 
   setVisible(visible) {
     this.workpiece.visible = visible;
+    if (!visible) {
+      this.workpiece.isSelected = false;
+    }
+    if (this.onSelectionChanged) {
+      this.onSelectionChanged(this.workpiece.isSelected);
+    }
+    this.render();
+  }
+
+  setSelected(selected) {
+    if (!this.workpiece.visible) {
+      this.workpiece.isSelected = false;
+      if (this.onSelectionChanged) this.onSelectionChanged(false);
+      return;
+    }
+    this.workpiece.isSelected = !!selected;
+    if (this.onSelectionChanged) {
+      this.onSelectionChanged(this.workpiece.isSelected);
+    }
     this.render();
   }
 
@@ -269,6 +293,9 @@ class BedVisualizer {
       const mmPos = this.canvasToMm(mx, my);
       this.currentMouseX = mx;
       this.currentMouseY = my;
+      this.mouseDownX = mx;
+      this.mouseDownY = my;
+      this.hasMovedSinceMouseDown = false;
 
       // If workpiece is NOT visible yet (no file loaded), all clicks pan/zoom only!
       if (!this.workpiece.visible) {
@@ -293,8 +320,11 @@ class BedVisualizer {
 
       if (e.button === 0 && clickedRotHandle) {
         this.workpiece.isRotating = true;
+        this.workpiece.isSelected = true;
         this.workpiece.rotateStartAngle = Math.atan2(my - center.y, mx - center.x);
         this.workpiece.rotateStartDeg = this.workpiece.rotation;
+        if (this.onSelectionChanged) this.onSelectionChanged(true);
+        this.render();
         return;
       }
 
@@ -311,7 +341,10 @@ class BedVisualizer {
 
       if (e.button === 0 && clickedResizeHandle) {
         this.workpiece.isResizing = true;
+        this.workpiece.isSelected = true;
         this.workpiece.activeCorner = clickedResizeHandle;
+        if (this.onSelectionChanged) this.onSelectionChanged(true);
+        this.render();
         return;
       }
 
@@ -322,8 +355,11 @@ class BedVisualizer {
 
       if (e.button === 0 && inside) {
         this.workpiece.isDragging = true;
+        this.workpiece.isSelected = true;
         this.workpiece.dragOffsetX = mmPos.x - this.workpiece.x;
         this.workpiece.dragOffsetY = mmPos.y - this.workpiece.y;
+        if (this.onSelectionChanged) this.onSelectionChanged(true);
+        this.render();
       } else {
         // Pan canvas
         this.isPanning = true;
@@ -338,6 +374,9 @@ class BedVisualizer {
       const my = e.clientY - rect.top;
       this.currentMouseX = mx;
       this.currentMouseY = my;
+      if (Math.hypot(mx - (this.mouseDownX || mx), my - (this.mouseDownY || my)) > 4) {
+        this.hasMovedSinceMouseDown = true;
+      }
       const mmPos = this.canvasToMm(mx, my);
 
       // Handle active rotation
@@ -461,7 +500,7 @@ class BedVisualizer {
       this.canvas.style.cursor = inside ? 'move' : 'default';
     });
 
-    window.addEventListener('mouseup', () => {
+    window.addEventListener('mouseup', (e) => {
       const wasTransforming = this.workpiece.isDragging || this.workpiece.isResizing || this.workpiece.isRotating;
       let actionName = 'Transform Artwork';
       if (this.workpiece.isRotating) actionName = `Rotate Artwork (${this.workpiece.rotation.toFixed(1)}°)`;
@@ -472,6 +511,25 @@ class BedVisualizer {
       this.workpiece.isResizing = false;
       this.workpiece.isRotating = false;
       this.isPanning = false;
+
+      // Handle pure click on canvas (not dragging or panning)
+      if (!wasTransforming && !this.hasMovedSinceMouseDown && this.workpiece.visible && (e.target === this.canvas)) {
+        const rect = this.canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const { hw, hh } = this.getWorkpieceCorners();
+        const local = this.canvasToWorkpieceLocal(mx, my);
+        const inside = Math.abs(local.lx) <= hw && Math.abs(local.ly) <= hh;
+
+        if (!inside && this.workpiece.isSelected) {
+          this.workpiece.isSelected = false;
+          if (this.onSelectionChanged) this.onSelectionChanged(false);
+        } else if (inside && !this.workpiece.isSelected) {
+          this.workpiece.isSelected = true;
+          if (this.onSelectionChanged) this.onSelectionChanged(true);
+        }
+      }
+
       this.render();
 
       if (wasTransforming && window.onWorkpieceTransformEnd) {
@@ -692,14 +750,24 @@ class BedVisualizer {
       ctx.rotate(rad); // Correct: rotate in same direction as handle and mouse movement
 
       // Workpiece Box Fill & Stroke
-      ctx.fillStyle = 'rgba(255, 145, 0, 0.12)';
-      ctx.fillRect(-hw, -hh, wpW, wpH);
-      ctx.strokeStyle = 'rgba(255, 145, 0, 0.85)';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(-hw, -hh, wpW, wpH);
+      if (this.workpiece.isSelected) {
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.08)';
+        ctx.fillRect(-hw, -hh, wpW, wpH);
+        ctx.strokeStyle = 'rgba(0, 229, 255, 0.95)';
+        ctx.lineWidth = 2.0;
+        ctx.strokeRect(-hw, -hh, wpW, wpH);
+      } else {
+        ctx.fillStyle = 'rgba(255, 145, 0, 0.05)';
+        ctx.fillRect(-hw, -hh, wpW, wpH);
+        ctx.strokeStyle = 'rgba(255, 145, 0, 0.6)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(-hw, -hh, wpW, wpH);
+        ctx.setLineDash([]);
+      }
 
       // Workpiece Center Crosshair
-      ctx.strokeStyle = 'rgba(255, 145, 0, 0.9)';
+      ctx.strokeStyle = this.workpiece.isSelected ? 'rgba(0, 229, 255, 0.9)' : 'rgba(255, 145, 0, 0.7)';
       ctx.beginPath();
       ctx.moveTo(-8, 0);
       ctx.lineTo(8, 0);
@@ -735,87 +803,98 @@ class BedVisualizer {
 
       ctx.restore();
 
-      // DRAW ROTATED CONTROLS & HANDLES IN SCREEN SPACE
-      const { corners } = this.getWorkpieceCorners();
-      const rotHandles = this.getCornerRotateHandles();
+      // DRAW ROTATED CONTROLS & HANDLES IN SCREEN SPACE (ONLY WHEN SELECTED)
+      if (this.workpiece.isSelected) {
+        const { corners } = this.getWorkpieceCorners();
+        const rotHandles = this.getCornerRotateHandles();
 
-      // Dimension & Rotation HUD Label above Workpiece
-      const topStalk = rotHandles.topStalk;
-      ctx.save();
-      ctx.fillStyle = '#ff9100';
-      ctx.font = 'bold 10px Outfit, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(
-        `${wp.width.toFixed(1)} × ${wp.height.toFixed(1)} mm  |  ⟳ ${wp.rotation.toFixed(1)}°`,
-        topStalk.x,
-        topStalk.y - 10
-      );
-      ctx.restore();
+        // Dimension & Rotation HUD Label above Workpiece
+        const topStalk = rotHandles.topStalk;
+        ctx.save();
+        ctx.fillStyle = '#00e5ff';
+        ctx.font = 'bold 10px Outfit, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(
+          `${wp.width.toFixed(1)} × ${wp.height.toFixed(1)} mm  |  ⟳ ${wp.rotation.toFixed(1)}°`,
+          topStalk.x,
+          topStalk.y - 10
+        );
+        ctx.restore();
 
-      // Top Stalk Connection Line
-      const topCenterCanvas = {
-        x: (corners.nw.x + corners.ne.x) / 2,
-        y: (corners.nw.y + corners.ne.y) / 2
-      };
-      ctx.save();
-      ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([2, 2]);
-      ctx.beginPath();
-      ctx.moveTo(topCenterCanvas.x, topCenterCanvas.y);
-      ctx.lineTo(topStalk.x, topStalk.y);
-      ctx.stroke();
-      ctx.restore();
-
-      // 4 Corner Resize Handles (Square badges)
-      ctx.fillStyle = '#ff9100';
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1.5;
-      for (const hKey in corners) {
-        const cp = corners[hKey];
-        ctx.fillRect(cp.x - 4, cp.y - 4, 8, 8);
-        ctx.strokeRect(cp.x - 4, cp.y - 4, 8, 8);
-      }
-
-      // Top-Right Corner Rotate Handle Connection Line
-      if (rotHandles.ne) {
-        const neCorner = corners.ne;
-        const neRot = rotHandles.ne;
+        // Top Stalk Connection Line
+        const topCenterCanvas = {
+          x: (corners.nw.x + corners.ne.x) / 2,
+          y: (corners.nw.y + corners.ne.y) / 2
+        };
         ctx.save();
         ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
         ctx.lineWidth = 1.2;
         ctx.setLineDash([2, 2]);
         ctx.beginPath();
-        ctx.moveTo(neCorner.x, neCorner.y);
-        ctx.lineTo(neRot.x, neRot.y);
+        ctx.moveTo(topCenterCanvas.x, topCenterCanvas.y);
+        ctx.lineTo(topStalk.x, topStalk.y);
         ctx.stroke();
         ctx.restore();
-      }
 
-      // Rotate Handles with Curved Arrows (Top-Right Corner + Top Stalk)
-      for (const rKey in rotHandles) {
-        const rp = rotHandles[rKey];
+        // 4 Corner Resize Handles (Square badges)
+        ctx.fillStyle = '#ff9100';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        for (const hKey in corners) {
+          const cp = corners[hKey];
+          ctx.fillRect(cp.x - 4, cp.y - 4, 8, 8);
+          ctx.strokeRect(cp.x - 4, cp.y - 4, 8, 8);
+        }
+
+        // Top-Right Corner Rotate Handle Connection Line
+        if (rotHandles.ne) {
+          const neCorner = corners.ne;
+          const neRot = rotHandles.ne;
+          ctx.save();
+          ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([2, 2]);
+          ctx.beginPath();
+          ctx.moveTo(neCorner.x, neCorner.y);
+          ctx.lineTo(neRot.x, neRot.y);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Rotate Handles with Curved Arrows (Top-Right Corner + Top Stalk)
+        for (const rKey in rotHandles) {
+          const rp = rotHandles[rKey];
+          ctx.save();
+          ctx.shadowColor = '#00e5ff';
+          ctx.shadowBlur = 8;
+
+          // Badge Circle
+          const radius = rp.isTopRight ? 10 : 8;
+          ctx.fillStyle = '#11141d';
+          ctx.beginPath();
+          ctx.arc(rp.x, rp.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = '#00e5ff';
+          ctx.lineWidth = rp.isTopRight ? 1.8 : 1.5;
+          ctx.stroke();
+
+          // Curved Circular Arrow Icon inside Rotate Handle
+          ctx.strokeStyle = '#00e5ff';
+          ctx.fillStyle = '#00e5ff';
+          ctx.lineWidth = 1.2;
+          this.drawCurvedArrow(ctx, rp.x, rp.y, rp.isTopRight ? 5.5 : 4.5, -Math.PI / 4, (4 * Math.PI) / 3, true);
+
+          ctx.restore();
+        }
+      } else {
+        // Draw subtle indication that workpiece is placed but not active
+        const { center, hh } = this.getWorkpieceCorners();
         ctx.save();
-        ctx.shadowColor = '#00e5ff';
-        ctx.shadowBlur = 8;
-
-        // Badge Circle
-        const radius = rp.isTopRight ? 10 : 8;
-        ctx.fillStyle = '#11141d';
-        ctx.beginPath();
-        ctx.arc(rp.x, rp.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.strokeStyle = '#00e5ff';
-        ctx.lineWidth = rp.isTopRight ? 1.8 : 1.5;
-        ctx.stroke();
-
-        // Curved Circular Arrow Icon inside Rotate Handle
-        ctx.strokeStyle = '#00e5ff';
-        ctx.fillStyle = '#00e5ff';
-        ctx.lineWidth = 1.2;
-        this.drawCurvedArrow(ctx, rp.x, rp.y, rp.isTopRight ? 5.5 : 4.5, -Math.PI / 4, (4 * Math.PI) / 3, true);
-
+        ctx.fillStyle = 'rgba(0, 229, 255, 0.75)';
+        ctx.font = '10px JetBrains Mono';
+        ctx.textAlign = 'center';
+        ctx.fillText('⟡ Click Object on Bed to Select', center.x, center.y - hh - 8);
         ctx.restore();
       }
 
