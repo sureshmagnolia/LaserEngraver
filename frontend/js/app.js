@@ -2368,6 +2368,25 @@ class FalconApp {
       }
     }
 
+    if (!loadedPaths && presetId === 'bed_scale_380mm' && typeof ClientBedScaleGenerator !== 'undefined') {
+      try {
+        const res = ClientBedScaleGenerator.generateGridGcode({
+          material: 'glass',
+          size_mm: 380.0,
+          origin_mode: 'front_left',
+          center_x: 200.0,
+          center_y: 207.5
+        });
+        if (res && res.norm_paths) {
+          lineCount = res.line_count;
+          this.currentActiveGcode = res.gcode_lines;
+          loadedPaths = res.norm_paths;
+        }
+      } catch (e) {
+        console.warn('ClientBedScaleGenerator fallback failed:', e);
+      }
+    }
+
     if (loadedPaths && loadedPaths.length > 0) {
       this.currentPaths = loadedPaths;
       this.visualizer.setToolpaths(loadedPaths, true);
