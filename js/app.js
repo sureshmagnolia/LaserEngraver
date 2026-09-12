@@ -2236,12 +2236,12 @@ class FalconApp {
       const targetX = xMatch ? parseFloat(xMatch[1]) : curX;
       const targetY = yMatch ? parseFloat(yMatch[1]) : curY;
 
-      if (l.startsWith('G0')) {
+      if (/^G0*0\b/i.test(l)) {
         if (cur.length > 1) rawPolys.push(cur);
         cur = [];
         curX = targetX;
         curY = targetY;
-      } else if (l.startsWith('G1')) {
+      } else if (/^G0*1\b/i.test(l)) {
         if (cur.length === 0) cur.push([curX, curY]);
         cur.push([targetX, targetY]);
         minX = Math.min(minX, curX, targetX);
@@ -2250,7 +2250,7 @@ class FalconApp {
         maxY = Math.max(maxY, curY, targetY);
         curX = targetX;
         curY = targetY;
-      } else if (l.startsWith('G2') || l.startsWith('G3')) {
+      } else if (/^G0*[23]\b/i.test(l)) {
         const iMatch = l.match(/I([-+]?[0-9.]+)/i);
         const jMatch = l.match(/J([-+]?[0-9.]+)/i);
         const iVal = iMatch ? parseFloat(iMatch[1]) : 0.0;
@@ -2258,25 +2258,27 @@ class FalconApp {
         const cx = curX + iVal;
         const cy = curY + jVal;
         const r = Math.hypot(iVal, jVal);
-        let startAng = Math.atan2(curY - cy, curX - cx);
-        let endAng = Math.atan2(targetY - cy, targetX - cx);
-        const isCw = l.startsWith('G2');
-        if (isCw) {
-          if (endAng >= startAng) endAng -= 2 * Math.PI;
-        } else {
-          if (endAng <= startAng) endAng += 2 * Math.PI;
-        }
-        const steps = Math.max(6, Math.round(Math.abs(endAng - startAng) / (2 * Math.PI) * 36));
-        if (cur.length === 0) cur.push([curX, curY]);
-        for (let s = 1; s <= steps; s++) {
-          const ang = startAng + (endAng - startAng) * (s / steps);
-          const px = cx + r * Math.cos(ang);
-          const py = cy + r * Math.sin(ang);
-          cur.push([px, py]);
-          minX = Math.min(minX, px);
-          maxX = Math.max(maxX, px);
-          minY = Math.min(minY, py);
-          maxY = Math.max(maxY, py);
+        if (r > 0.01) {
+          let startAng = Math.atan2(curY - cy, curX - cx);
+          let endAng = Math.atan2(targetY - cy, targetX - cx);
+          const isCw = /^G0*2\b/i.test(l);
+          if (isCw) {
+            if (endAng >= startAng) endAng -= 2 * Math.PI;
+          } else {
+            if (endAng <= startAng) endAng += 2 * Math.PI;
+          }
+          const steps = Math.max(6, Math.round(Math.abs(endAng - startAng) / (2 * Math.PI) * 36));
+          if (cur.length === 0) cur.push([curX, curY]);
+          for (let s = 1; s <= steps; s++) {
+            const ang = startAng + (endAng - startAng) * (s / steps);
+            const px = cx + r * Math.cos(ang);
+            const py = cy + r * Math.sin(ang);
+            cur.push([px, py]);
+            minX = Math.min(minX, px);
+            maxX = Math.max(maxX, px);
+            minY = Math.min(minY, py);
+            maxY = Math.max(maxY, py);
+          }
         }
         curX = targetX;
         curY = targetY;
@@ -2613,14 +2615,18 @@ class FalconApp {
   }
 
   async stopJob() {
-    if (confirm('Are you sure you want to ABORT the engraving?')) {
-      if (this.serialController && this.serialController.isConnected) {
-        this.serialController.stopStream();
-        return;
-      }
-      await fetch('/api/stop_job', { method: 'POST' });
-      this.log('Job aborted! Soft reset sent to laser.');
+    this.log('🛑 EMERGENCY STOP TRIGGERED: Halting laser motion immediately...');
+    if (this.serialController && this.serialController.isConnected) {
+      await this.serialController.stopStream();
     }
+    try {
+      await fetch('/api/stop_job', { method: 'POST' });
+    } catch (e) {}
+
+    this.btnStartJob.disabled = false;
+    this.btnPauseJob.disabled = true;
+    this.btnStopJob.disabled = true;
+    this.log('🛑 Emergency Stop sent: Motion halted & laser diode killed.');
   }
 
   scaleWorkpiece(factor) {

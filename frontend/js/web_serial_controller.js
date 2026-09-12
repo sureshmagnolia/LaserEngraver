@@ -394,11 +394,21 @@ class WebSerialController {
     this.log("Job resumed.");
   }
 
-  stopStream() {
+  async stopStream() {
     this.abortRequested = true;
-    this.sendLine("M5");
-    this.sendLine("\x18"); // GRBL Soft Reset
-    this.log("Job stopped.");
+    this.isStreaming = false;
+    this.isPaused = false;
+    if (this.streamingAckResolve) {
+      const r = this.streamingAckResolve;
+      this.streamingAckResolve = null;
+      r();
+    }
+    try {
+      await this.sendLine("!");
+      await this.sendLine("\x18"); // GRBL Soft Reset
+      await this.sendLine("M5");
+    } catch (e) {}
+    this.log("Job aborted! Soft reset sent to laser.");
   }
 }
 

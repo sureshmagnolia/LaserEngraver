@@ -242,7 +242,7 @@ class SvgEngine:
             f"; Size: {width_mm:.2f} x {height_mm:.2f} mm at ({x_pos:.2f}, {y_pos:.2f})",
             f"; Feed: {speed_mm_min:.0f} mm/min | Power: S{power_s} | Passes: {passes}",
             "G90 G21",
-            "M4 S0",
+            "M5",
             f"G0 F{speed_mm_min * 1.5:.0f}"
         ]
 
@@ -253,22 +253,25 @@ class SvgEngine:
             for poly in norm_paths:
                 if len(poly) < 2:
                     continue
-                # Start point
+                # Start point: Invert Y so SVG top (y=0) maps to CNC top (+Y)
                 sx = x_pos + poly[0][0] * width_mm
-                sy = y_pos + poly[0][1] * height_mm
+                sy = y_pos + (1.0 - poly[0][1]) * height_mm
                 
                 # Rapid to start with laser OFF
                 lines.append(f"G0 X{sx:.3f} Y{sy:.3f}")
                 
+                # Laser ON for cutting
+                lines.append(f"M3 S{power_s}")
+                
                 # Trace path with laser ON
                 for pt in poly[1:]:
                     tx = x_pos + pt[0] * width_mm
-                    ty = y_pos + pt[1] * height_mm
-                    lines.append(f"G1 X{tx:.3f} Y{ty:.3f} F{speed_mm_min:.0f} S{power_s}")
+                    ty = y_pos + (1.0 - pt[1]) * height_mm
+                    lines.append(f"G1 X{tx:.3f} Y{ty:.3f} F{speed_mm_min:.0f}")
                 
                 # Laser OFF between segments
                 lines.append("M5")
 
         lines.append("M5")
-        lines.append(f"G0 X{x_pos:.3f} Y{y_pos:.3f}")
+        lines.append(f"G0 X{x_pos:.3f} Y{y_pos:.3f} F{speed_mm_min * 1.5:.0f}")
         return lines

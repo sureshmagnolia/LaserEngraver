@@ -143,18 +143,19 @@ class GrblController:
                 self.ser = None
 
     def send_immediate(self, char_or_cmd: bytes):
-        """Send immediate realtime command like '?' (0x3F), '!' (hold), '~' (resume), or 0x18 (reset)."""
-        with self.lock:
-            if self.ser and self.ser.is_open:
-                try:
-                    self.ser.write(char_or_cmd)
-                except Exception as e:
-                    print(f"[GRBL] Send immediate error: {e}")
+        """Send immediate realtime command like '?' (0x3F), '!' (hold), '~' (resume), or 0x18 (reset) without blocking on lock."""
+        ser = self.ser
+        if ser and ser.is_open:
+            try:
+                ser.write(char_or_cmd)
+                ser.flush()
+            except Exception as e:
+                print(f"[GRBL] Send immediate error: {e}")
 
     def send_line(self, line: str, timeout: float = 3.0) -> bool:
         """Send a single line and wait for 'ok' or 'error'."""
         with self.lock:
-            if not self.ser or not self.ser.is_open:
+            if not self.ser or not self.ser.is_open or self.stream_abort_requested:
                 return False
             clean = line.strip()
             if not clean:
@@ -163,6 +164,8 @@ class GrblController:
                 self.ser.write((clean + "\r\n").encode("utf-8"))
                 start = time.time()
                 while time.time() - start < timeout:
+                    if self.stream_abort_requested:
+                        return False
                     if self.ser.in_waiting > 0:
                         res = self.ser.readline().decode("utf-8", errors="ignore").strip()
                         if not res:
@@ -274,9 +277,15 @@ class GrblController:
         self.stream_abort_requested = True
         self.is_streaming = False
         self.is_paused = False
-        self.send_immediate(b"\x18")
+        self.send_immediate(b"!\x18")
         time.sleep(0.05)
         self.send_immediate(b"M5\r\n")
+        try:
+            if self.ser and self.ser.is_open:
+                self.ser.flushInput()
+                self.ser.flushOutput()
+        except Exception:
+            pass
 
     def _streaming_worker(self, lines: List[str]):
         """Stream lines with flow control."""

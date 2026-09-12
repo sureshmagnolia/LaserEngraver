@@ -11,6 +11,8 @@ import base64
 import asyncio
 import re
 import math
+import time
+import threading
 from typing import Dict, Any, List, Tuple
 
 from starlette.applications import Starlette
@@ -327,17 +329,17 @@ def parse_gcode_to_norm_paths(filepath: str) -> Tuple[List[List[List[float]]], f
         target_x = float(x_m.group(1)) if x_m else cur_x
         target_y = float(y_m.group(1)) if y_m else cur_y
         
-        if line.startswith('G0'):
+        if re.match(r'^G0*0\b', line, re.IGNORECASE):
             if len(curr_poly) > 1:
                 raw_polys.append(curr_poly)
             curr_poly = []
             cur_x, cur_y = target_x, target_y
-        elif line.startswith('G1'):
+        elif re.match(r'^G0*1\b', line, re.IGNORECASE):
             if not curr_poly:
                 curr_poly.append((cur_x, cur_y))
             curr_poly.append((target_x, target_y))
             cur_x, cur_y = target_x, target_y
-        elif line.startswith('G2') or line.startswith('G3'):
+        elif re.match(r'^G0*[23]\b', line, re.IGNORECASE):
             i_m = re.search(r'I([-+]?[0-9.]+)', line)
             j_m = re.search(r'J([-+]?[0-9.]+)', line)
             i_val = float(i_m.group(1)) if i_m else 0.0
@@ -345,21 +347,22 @@ def parse_gcode_to_norm_paths(filepath: str) -> Tuple[List[List[List[float]]], f
             cx = cur_x + i_val
             cy = cur_y + j_val
             r = math.hypot(i_val, j_val)
-            start_ang = math.atan2(cur_y - cy, cur_x - cx)
-            end_ang = math.atan2(target_y - cy, target_x - cx)
-            is_cw = line.startswith('G2')
-            if is_cw:
-                if end_ang >= start_ang:
-                    end_ang -= 2 * math.pi
-            else:
-                if end_ang <= start_ang:
-                    end_ang += 2 * math.pi
-            steps = max(6, int(abs(end_ang - start_ang) / (2 * math.pi) * 36))
-            if not curr_poly:
-                curr_poly.append((cur_x, cur_y))
-            for s in range(1, steps + 1):
-                ang = start_ang + (end_ang - start_ang) * (s / steps)
-                curr_poly.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+            if r > 0.01:
+                start_ang = math.atan2(cur_y - cy, cur_x - cx)
+                end_ang = math.atan2(target_y - cy, target_x - cx)
+                is_cw = bool(re.match(r'^G0*2\b', line, re.IGNORECASE))
+                if is_cw:
+                    if end_ang >= start_ang:
+                        end_ang -= 2 * math.pi
+                else:
+                    if end_ang <= start_ang:
+                        end_ang += 2 * math.pi
+                steps = max(6, int(abs(end_ang - start_ang) / (2 * math.pi) * 36))
+                if not curr_poly:
+                    curr_poly.append((cur_x, cur_y))
+                for s in range(1, steps + 1):
+                    ang = start_ang + (end_ang - start_ang) * (s / steps)
+                    curr_poly.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
             cur_x, cur_y = target_x, target_y
 
     if len(curr_poly) > 1:
