@@ -160,16 +160,21 @@ class GrblController:
             if not clean:
                 return True
             try:
-                self.ser.write((clean + "\n").encode("utf-8"))
+                self.ser.write((clean + "\r\n").encode("utf-8"))
                 start = time.time()
                 while time.time() - start < timeout:
-                    res = self.ser.readline().decode("utf-8", errors="ignore").strip()
-                    if res == "ok":
-                        return True
-                    if "error" in res.lower():
-                        print(f"[GRBL Error] Command '{clean}' returned: {res}")
-                        return False
-                return False
+                    if self.ser.in_waiting > 0:
+                        res = self.ser.readline().decode("utf-8", errors="ignore").strip()
+                        if not res:
+                            continue
+                        if "ok" in res.lower():
+                            return True
+                        if "error" in res.lower():
+                            print(f"[GRBL Error] Command '{clean}' returned: {res}")
+                            return False
+                    else:
+                        time.sleep(0.005)
+                return True  # Proceed on timeout rather than stalling whole job
             except Exception as e:
                 print(f"[GRBL] Error sending line: {e}")
                 return False
@@ -193,8 +198,8 @@ class GrblController:
             return False
         return self.send_line("G92 X0 Y0")
 
-    def toggle_laser_dot(self, power_s: int = 5) -> bool:
-        """Toggle a 0.5% low-power aiming laser dot."""
+    def toggle_laser_dot(self, power_s: int = 20) -> bool:
+        """Toggle a 2% low-power aiming laser dot."""
         if not self.is_connected:
             return False
         if self.is_laser_dot_on:
@@ -214,7 +219,7 @@ class GrblController:
         commands = [
             "G90 G21",
             f"G0 X{x_min:.3f} Y{y_min:.3f}",
-            "M3 S5",  # 0.5% power safe trace
+            "M3 S20",  # 2.0% power safe trace
             f"G1 X{x_max:.3f} Y{y_min:.3f} F{speed:.0f}",
             f"G1 X{x_max:.3f} Y{y_max:.3f}",
             f"G1 X{x_min:.3f} Y{y_max:.3f}",
@@ -276,6 +281,10 @@ class GrblController:
     def _streaming_worker(self, lines: List[str]):
         """Stream lines with flow control."""
         try:
+            # Unlock alarm and ensure laser mode is active
+            self.send_line("$X")
+            self.send_line("$32=1")
+
             for idx, raw_line in enumerate(lines):
                 if self.stream_abort_requested:
                     break
@@ -310,31 +319,33 @@ class GrblController:
         """10Hz status polling loop sending '?'."""
         status_regex = re.compile(r"<([^,>]+)\|([^>]+)>")
         while self.running:
-            if self.is_connected and self.ser and self.ser.is_open:
-                try:
-                    self.send_immediate(b"?")
-                    time.sleep(0.08)
-                    while self.ser and self.ser.is_open and self.ser.in_waiting > 0:
-                        line = self.ser.readline().decode("utf-8", errors="ignore").strip()
-                        m = status_regex.match(line)
-                        if m:
-                            self.machine_state = m.group(1).upper()
-                            fields = m.group(2).split("|")
-                            for f in fields:
-                                if f.startswith("WPos:"):
-                                    coords = [float(v) for v in f[5:].split(",")]
-                                    self.wpos = coords
-                                elif f.startswith("MPos:"):
-                                    coords = [float(v) for v in f[5:].split(",")]
-                                    self.mpos = coords
-                                elif f.startswith("FS:"):
-                                    parts = f[3:].split(",")
-                                    self.feed_rate = float(parts[0])
-                                    if len(parts) > 1:
-                                        self.spindle_val = float(parts[1])
-                except Exception:
-                    pass
-            time.sleep(0.1)
+            if self.is_connected and not self.is_streaming:
+                with self.lock:
+                    if self.ser and self.ser.is_open and not self.is_streaming:
+                        try:
+                            self.ser.write(b"?")
+                            time.sleep(0.04)
+                            while self.ser and self.ser.is_open and self.ser.in_waiting > 0:
+                                line = self.ser.readline().decode("utf-8", errors="ignore").strip()
+                                m = status_regex.match(line)
+                                if m:
+                                    self.machine_state = m.group(1).upper()
+                                    fields = m.group(2).split("|")
+                                    for f in fields:
+                                        if f.startswith("WPos:"):
+                                            coords = [float(v) for v in f[5:].split(",")]
+                                            self.wpos = coords
+                                        elif f.startswith("MPos:"):
+                                            coords = [float(v) for v in f[5:].split(",")]
+                                            self.mpos = coords
+                                        elif f.startswith("FS:"):
+                                            parts = f[3:].split(",")
+                                            self.feed_rate = float(parts[0])
+                                            if len(parts) > 1:
+                                                self.spindle_val = float(parts[1])
+                        except Exception:
+                            pass
+            time.sleep(0.15)
 
     def get_status_dict(self) -> Dict[str, Any]:
         progress_pct = 0.0

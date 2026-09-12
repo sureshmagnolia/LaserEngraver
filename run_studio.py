@@ -18,7 +18,7 @@ from server import app
 
 def open_browser():
     time.sleep(1.2)
-    url = "http://localhost:8080"
+    url = "http://localhost:8055"
     print(f"\n========================================================")
     print(f"   FALCON LASER STUDIO IS RUNNING!")
     print(f"   Opening browser at: {url}")
@@ -30,4 +30,4 @@ if __name__ == "__main__":
     import uvicorn
     # Launch browser in a background thread
     threading.Thread(target=open_browser, daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=8055, log_level="warning")

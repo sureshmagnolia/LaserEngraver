@@ -20,6 +20,8 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+
 
 # Add backend directory to sys.path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -215,6 +217,7 @@ async def api_generate_gcode(request):
         return JSONResponse({
             "success": True,
             "line_count": len(lines),
+            "lines": lines,
             "estimated_time_sec": round(len(lines) * 0.03, 1),
             "snippet": lines[:25]
         })
@@ -437,6 +440,7 @@ async def api_load_preset_gcode(request):
             "id": preset_id,
             "name": "Full-Bed Calibration Grid (380x380 mm)",
             "line_count": res["line_count"],
+            "lines": res["gcode_lines"],
             "w": 380.0,
             "h": 380.0,
             "workpiece_w": 380.0,
@@ -466,7 +470,7 @@ async def api_load_preset_gcode(request):
         return JSONResponse({"error": f"Preset file not found: {meta['file']}"}, status_code=404)
         
     with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
-        lines = f.readlines()
+        lines = [line.strip() for line in f.readlines() if line.strip()]
     current_active_gcode = lines
     
     norm_paths, sx, sy = parse_gcode_to_norm_paths(target_path)
@@ -476,6 +480,7 @@ async def api_load_preset_gcode(request):
         "id": preset_id,
         "name": meta["name"],
         "line_count": len(lines),
+        "lines": lines,
         "w": meta["w"],
         "h": meta["h"],
         "workpiece_w": meta["workpiece_w"],
@@ -571,7 +576,7 @@ async def api_go_to_origin(request):
     # Rapid to 0,0 and pulse aiming beam
     controller.send_line("G90 G21")
     controller.send_line("G0 X0 Y0 F1500")
-    controller.send_line("M3 S5")
+    controller.send_line("M3 S20")
     # Turn off after 4 seconds in background thread
     def turn_off():
         time.sleep(4.0)
@@ -609,9 +614,19 @@ routes = [
     Mount("/static", app=StaticFiles(directory=frontend_dir), name="static")
 ]
 
+class NoCacheMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
 middleware = [
-    Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]),
+    Middleware(NoCacheMiddleware)
 ]
+
 
 app = Starlette(debug=True, routes=routes, middleware=middleware)
 

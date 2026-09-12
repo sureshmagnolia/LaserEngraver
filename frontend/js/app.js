@@ -108,7 +108,7 @@ class FalconApp {
 
     // Web Serial Controller
     this.serialController = new WebSerialController();
-    this.serialController.onStatus = (status) => this.handleStatusUpdate(status);
+    this.serialController.onStatus = (status) => this.updateTelemetry(status);
     this.serialController.onLog = (msg) => this.log(msg);
     this.hudCoords = document.getElementById('hudCoords');
     this.hudFeedPower = document.getElementById('hudFeedPower');
@@ -943,6 +943,10 @@ class FalconApp {
     }
   }
 
+  handleStatusUpdate(status) {
+    this.updateTelemetry(status);
+  }
+
   async refreshPorts() {
     this.portSelect.innerHTML = '';
 
@@ -1005,10 +1009,14 @@ class FalconApp {
       const webSerialOpt = document.createElement('option');
       webSerialOpt.value = 'WEB_SERIAL';
       webSerialOpt.textContent = '⚡ Web Serial USB (Direct Browser)';
-      this.portSelect.appendChild(webSerialOpt);
+      this.portSelect.prepend(webSerialOpt);
+      if (!this.isVirtualConnected && !autoSelected) {
+        this.portSelect.value = 'WEB_SERIAL';
+        autoSelected = true;
+      }
     }
 
-    // Preserve selection or default to Virtual Machine
+    // Preserve selection or default to Virtual Machine if no Web Serial
     if (this.isVirtualConnected) {
       this.portSelect.value = 'VIRTUAL';
     } else if (!autoSelected) {
@@ -1529,7 +1537,7 @@ class FalconApp {
       this.isAimingDotActive = !this.isAimingDotActive;
     }
 
-    const pwr = this.isAimingDotActive ? 5 : 0; // 0.5% power (S5)
+    const pwr = this.isAimingDotActive ? 20 : 0; // 2.0% power (S20)
 
     // 1. Web Serial USB
     if (this.serialController && this.serialController.isConnected) {
@@ -1583,13 +1591,13 @@ class FalconApp {
 
     if (this.laserDotStatusText) {
       this.laserDotStatusText.textContent = this.isAimingDotActive 
-        ? '🔴 Dot is ON (0.5% power diode active)' 
+        ? '🔴 Dot is ON (2% power diode active)' 
         : '⚪ Dot is currently OFF';
       this.laserDotStatusText.style.color = this.isAimingDotActive ? '#ff5252' : '#888';
     }
 
     this.log(this.isAimingDotActive 
-      ? 'Laser Aiming Dot turned ON (0.5% power). Place your material under the beam.' 
+      ? 'Laser Aiming Dot turned ON (2% power). Place your material under the beam.' 
       : 'Laser Aiming Dot turned OFF.');
   }
 
@@ -2323,6 +2331,9 @@ class FalconApp {
           const data = await res.json();
           if (data.success) {
             lineCount = data.line_count || 0;
+            if (data.lines && data.lines.length > 0) {
+              this.currentActiveGcode = data.lines;
+            }
             if (data.norm_paths && data.norm_paths.length > 0) {
               loadedPaths = data.norm_paths;
             }
@@ -2353,7 +2364,7 @@ class FalconApp {
       }
     }
 
-    if (!loadedPaths && info.file) {
+    if (!this.currentActiveGcode && info.file) {
       try {
         const gRes = await fetch(info.file);
         if (gRes.ok) {
@@ -2361,7 +2372,7 @@ class FalconApp {
           const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
           lineCount = lines.length;
           this.currentActiveGcode = lines;
-          loadedPaths = this.parseGcodeToolpaths(lines);
+          if (!loadedPaths) loadedPaths = this.parseGcodeToolpaths(lines);
         }
       } catch (e) {
         console.warn('Static preset file fetch failed:', e);
@@ -2458,12 +2469,17 @@ class FalconApp {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        if (res.ok) data = await res.json();
+        if (res.ok) {
+          data = await res.json();
+          if (data && data.lines && data.lines.length > 0) {
+            this.currentActiveGcode = data.lines;
+          }
+        }
       } catch (e) {
         // Standalone / GitHub Pages
       }
 
-      if (!data || !data.success) {
+      if (!this.currentActiveGcode || this.currentActiveGcode.length === 0 || !data || !data.lines || data.lines.length === 0) {
         if (this.currentMode === 'vector') {
           const rotDeg = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0;
           const lines = ClientSvgCompiler.generateVectorGcode({
@@ -2479,7 +2495,7 @@ class FalconApp {
             power_s: payload.power,
             passes: payload.passes
           });
-          data = { success: true, line_count: lines.length, snippet: lines.slice(0, 25) };
+          data = { success: true, line_count: lines.length, lines: lines, snippet: lines.slice(0, 25) };
           this.currentActiveGcode = lines;
         } else {
           // Client raster dither G-code compilation
@@ -2501,14 +2517,15 @@ class FalconApp {
             speed_mm_min: payload.speed,
             max_power_s: payload.power
           });
-          data = { success: true, line_count: lines.length, snippet: lines.slice(0, 25) };
+          data = { success: true, line_count: lines.length, lines: lines, snippet: lines.slice(0, 25) };
           this.currentActiveGcode = lines;
         }
       }
 
-      if (data && data.success) {
-        this.log(`G-code generated: ${data.line_count} lines! Ready to stream.`);
-        this.jobLinesText.textContent = `Line: 0 / ${data.line_count}`;
+      const totalLines = (this.currentActiveGcode && this.currentActiveGcode.length) || (data && data.line_count) || 0;
+      if (totalLines > 0) {
+        this.log(`G-code generated: ${totalLines} lines! Ready to stream.`);
+        this.jobLinesText.textContent = `Line: 0 / ${totalLines}`;
         this.btnStartJob.disabled = false;
       } else {
         this.log(`Error generating G-code: ${data ? data.error : 'Unknown'}`);
@@ -2520,18 +2537,59 @@ class FalconApp {
 
   async startJob() {
     const jobName = this.currentFile ? this.currentFile.name : (this.currentPresetId || 'Engrave Job');
-    if (this.serialController && this.serialController.isConnected) {
+    if (!this.currentActiveGcode || this.currentActiveGcode.length === 0) {
+      if (this.currentPresetId) {
+        await this.loadPreset(this.currentPresetId);
+      }
       if (!this.currentActiveGcode || this.currentActiveGcode.length === 0) {
         await this.generateGcode();
       }
-      if (!this.currentActiveGcode || this.currentActiveGcode.length === 0) {
-        alert("Please generate G-code toolpaths first.");
-        return;
+    }
+
+    // Guaranteed fallback: If still null but we have loaded paths, generate directly
+    if ((!this.currentActiveGcode || this.currentActiveGcode.length === 0) && this.currentPaths && this.currentPaths.length > 0) {
+      const rotDeg = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0;
+      const w = parseFloat(this.inputWidth.value) || 35;
+      const h = parseFloat(this.inputHeight.value) || 35;
+      const cx = parseFloat(this.inputX.value) || 200;
+      const cy = parseFloat(this.inputY.value) || 207.5;
+      this.currentActiveGcode = ClientSvgCompiler.generateVectorGcode({
+        norm_paths: this.currentPaths,
+        center_x: cx,
+        center_y: cy,
+        x_pos: cx - w / 2,
+        y_pos: cy - h / 2,
+        width_mm: w,
+        height_mm: h,
+        rotation_deg: rotDeg,
+        speed_mm_min: parseFloat(this.inputSpeed.value) || 900,
+        power_s: parseInt(this.inputPower.value) || 280,
+        passes: parseInt(this.inputPasses.value) || 1
+      });
+      if (this.currentActiveGcode && this.currentActiveGcode.length > 0) {
+        this.jobLinesText.textContent = `Line: 0 / ${this.currentActiveGcode.length}`;
+        this.btnStartJob.disabled = false;
       }
-      this.serialController.streamGcode(this.currentActiveGcode, jobName, (st) => this.handleStatusUpdate(st));
+    }
+
+    if (!this.currentActiveGcode || this.currentActiveGcode.length === 0) {
+      alert("Please generate G-code toolpaths first.");
       return;
     }
-    this.log(`Starting laser job: ${jobName}...`);
+
+
+    if (this.serialController && this.serialController.isConnected) {
+      this.log(`Streaming job via USB Serial: ${jobName} (${this.currentActiveGcode.length} lines)...`);
+      try {
+        await this.serialController.streamGcode(this.currentActiveGcode, jobName, (st) => this.handleStatusUpdate(st));
+        this.log(`Job "${jobName}" completed successfully!`);
+      } catch (err) {
+        this.log(`Streaming error: ${err.message}`);
+        alert(`Streaming failed: ${err.message}`);
+      }
+      return;
+    }
+    this.log(`Starting laser job via local backend: ${jobName}...`);
     const res = await fetch('/api/start_job', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -114,7 +114,7 @@ class WebSerialController {
 
   async sendLine(line) {
     if (!this.writer || !this.isConnected) return;
-    const clean = line.trim() + "\n";
+    const clean = line.trim() + "\r\n";
     await this.writer.write(clean);
   }
 
@@ -159,13 +159,21 @@ class WebSerialController {
 
       if (line.startsWith("<") && line.endsWith(">")) {
         this.parseGrblStatus(line);
-      } else if (line.toLowerCase() === "ok") {
+      } else if (line.toLowerCase() === "ok" || line.toLowerCase().includes("ok")) {
         // Ack for streaming
         if (this.streamingAckResolve) {
-          this.streamingAckResolve();
+          const resolve = this.streamingAckResolve;
+          this.streamingAckResolve = null;
+          resolve();
         }
       } else if (line.toLowerCase().startsWith("error") || line.toLowerCase().startsWith("alarm")) {
         this.log(`GRBL Alert: ${line}`);
+        // CRUCIAL: Do not hang the streamer on error!
+        if (this.streamingAckResolve) {
+          const resolve = this.streamingAckResolve;
+          this.streamingAckResolve = null;
+          resolve();
+        }
       }
     }
   }
@@ -193,7 +201,11 @@ class WebSerialController {
     }
 
     if (this.onStatus) {
-      this.onStatus(this.getStatusDict());
+      try {
+        this.onStatus(this.getStatusDict());
+      } catch (err) {
+        console.warn("[WebSerial] onStatus callback error:", err);
+      }
     }
   }
 
@@ -255,7 +267,7 @@ class WebSerialController {
     this.log("Moving laser directly to Physical Origin (0,0)...");
     await this.sendLine("G90 G21");
     await this.sendLine("G0 X0 Y0 F1500");
-    await this.sendLine("M3 S5"); // 0.5% aiming dot
+    await this.sendLine("M3 S20"); // 2.0% aiming dot
     this.isLaserDotOn = true;
 
     setTimeout(async () => {
@@ -265,7 +277,7 @@ class WebSerialController {
     }, 4000);
   }
 
-  async toggleLaserDot(power = 5) {
+  async toggleLaserDot(power = 20) {
     if (!this.isConnected) return false;
     this.isLaserDotOn = !this.isLaserDotOn;
     if (this.isLaserDotOn) {
@@ -283,7 +295,7 @@ class WebSerialController {
     this.log(`Tracing workpiece frame [${xmin}, ${ymin}] to [${xmax}, ${ymax}]...`);
     await this.sendLine("G90 G21");
     await this.sendLine(`G0 X${xmin} Y${ymin} F${feed}`);
-    await this.sendLine("M3 S5");
+    await this.sendLine("M3 S20");
     await this.sendLine(`G1 X${xmax} Y${ymin} F${feed}`);
     await this.sendLine(`G1 X${xmax} Y${ymax} F${feed}`);
     await this.sendLine(`G1 X${xmin} Y${ymax} F${feed}`);
@@ -311,6 +323,12 @@ class WebSerialController {
     this.log(`Starting stream for "${jobName}" (${lines.length} lines)...`);
 
     try {
+      // Ensure machine is awake, laser mode is active, and alarm is cleared
+      await this.sendLine("$X");
+      await new Promise(r => setTimeout(r, 80));
+      await this.sendLine("$32=1");
+      await new Promise(r => setTimeout(r, 80));
+
       for (let i = 0; i < lines.length; i++) {
         if (this.abortRequested) {
           await this.sendLine("M5");
@@ -327,16 +345,28 @@ class WebSerialController {
         this.streamingCurrentLine = i + 1;
 
         if (line && !line.startsWith(";")) {
-          // Wait for ok ack
+          // Wait for ok ack with a safe 3.5s timeout
+          let timer = null;
           const ackPromise = new Promise(resolve => {
-            this.streamingAckResolve = resolve;
+            this.streamingAckResolve = () => {
+              if (timer) clearTimeout(timer);
+              resolve();
+            };
+            timer = setTimeout(() => {
+              this.streamingAckResolve = null;
+              resolve(); // Don't hang forever
+            }, 3500);
           });
           await this.sendLine(line);
           await ackPromise;
         }
 
-        if (i % 20 === 0 && onProgress) {
-          onProgress(this.getStatusDict());
+        if (i % 15 === 0 && onProgress) {
+          try {
+            onProgress(this.getStatusDict());
+          } catch (e) {
+            console.warn("[WebSerial] onProgress callback error:", e);
+          }
         }
       }
 
