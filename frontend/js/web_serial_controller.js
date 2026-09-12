@@ -277,15 +277,18 @@ class WebSerialController {
     }, 4000);
   }
 
-  async toggleLaserDot(power = 20) {
+  async toggleLaserDot(power = 40) {
     if (!this.isConnected) return false;
     this.isLaserDotOn = !this.isLaserDotOn;
     if (this.isLaserDotOn) {
-      await this.sendLine(`M3 S${power}`);
-      this.log(`Aiming dot ON (${(power / 10).toFixed(1)}% power)`);
+      const dotPower = Math.max(30, Math.min(80, power || 40));
+      await this.sendLine("$32=0");
+      await this.sendLine(`M3 S${dotPower}`);
+      this.log(`Aiming dot ON (${(dotPower / 10).toFixed(1)}% power) - Stationary Spindle Mode`);
     } else {
       await this.sendLine("M5");
-      this.log("Aiming dot OFF");
+      await this.sendLine("$32=1");
+      this.log("Aiming dot OFF - Laser Mode restored ($32=1)");
     }
     return this.isLaserDotOn;
   }

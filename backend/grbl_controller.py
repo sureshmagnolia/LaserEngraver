@@ -232,28 +232,30 @@ class GrblController:
         self.send_line("$X", timeout=1.0, ignore_abort=True)
         return self.send_line("G92 X0 Y0", ignore_abort=True)
 
-    def toggle_laser_dot(self, power_s: int = 20) -> bool:
+    def toggle_laser_dot(self, power_s: int = 40) -> bool:
         """
         Toggle low-power aiming laser dot.
         In GRBL 1.1 laser mode ($32=1), stationary M3 S... suppresses the beam until motion occurs.
-        We send a tiny 0.02mm motion back-and-forth so GRBL energizes the laser diode safely.
+        To maintain a continuous, clearly visible bright blue aiming dot while stationary:
+        1. Temporarily set $32=0 (non-laser spindle mode, allows stationary PWM output).
+        2. Set M3 S{power_s} (S40 = 4.0% power, brightly visible without burning wood while stationary).
+        When turned OFF:
+        1. Send M5 (laser diode off).
+        2. Restore $32=1 (laser mode for safety and vector jobs).
         """
-        if not self.is_connected:
+        if not self.is_connected or self.is_streaming:
             return False
         self.stream_abort_requested = False
         self.send_line("$X", timeout=1.0, ignore_abort=True)
         if self.is_laser_dot_on:
             self.send_line("M5", timeout=1.0, ignore_abort=True)
+            self.send_line("$32=1", timeout=1.0, ignore_abort=True)
             self.is_laser_dot_on = False
             return False
         else:
-            # Ensure laser mode is active
-            self.send_line("$32=1", timeout=1.0, ignore_abort=True)
-            self.send_line("G91 G21", timeout=1.0, ignore_abort=True)
-            self.send_line(f"M3 S{power_s}", timeout=1.0, ignore_abort=True)
-            self.send_line("G1 X0.02 Y0 F100", timeout=1.0, ignore_abort=True)
-            self.send_line("G1 X-0.02 Y0 F100", timeout=1.0, ignore_abort=True)
-            self.send_line("G90", timeout=1.0, ignore_abort=True)
+            dot_power = max(30, min(80, power_s if power_s > 0 else 40))
+            self.send_line("$32=0", timeout=1.0, ignore_abort=True)
+            self.send_line(f"M3 S{dot_power}", timeout=1.0, ignore_abort=True)
             self.is_laser_dot_on = True
             return True
 

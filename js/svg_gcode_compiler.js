@@ -156,6 +156,8 @@ class ClientSvgCompiler {
     width_mm,
     height_mm,
     rotation_deg = 0,
+    flip_x = false,
+    flip_y = false,
     speed_mm_min = 900,
     power_s = 280,
     passes = 1
@@ -167,6 +169,8 @@ class ClientSvgCompiler {
     const sin = Math.sin(rad);
 
     const transformPoint = (nx, ny) => {
+      if (flip_x) nx = 1.0 - nx;
+      if (flip_y) ny = 1.0 - ny;
       const lx = (nx - 0.5) * width_mm;
       const ly = (0.5 - ny) * height_mm;
       const rx = lx * cos - ly * sin;

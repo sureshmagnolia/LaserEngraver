@@ -273,6 +273,11 @@ class FalconApp {
     this.checkLockAspect = document.getElementById('checkLockAspect');
     this.btnCenterBed = document.getElementById('btnCenterBed');
     this.btnBatch2x2 = document.getElementById('btnBatch2x2');
+    this.btnFlipH = document.getElementById('btnFlipH');
+    this.btnFlipV = document.getElementById('btnFlipV');
+    this.btnRotateCCW = document.getElementById('btnRotateCCW');
+    this.btnRotate180 = document.getElementById('btnRotate180');
+    this.btnRotateCW = document.getElementById('btnRotateCW');
 
     // Laser parameters
     this.inputSpeed = document.getElementById('inputSpeed');
@@ -697,6 +702,12 @@ class FalconApp {
         this.saveState('Reset Rotation (0°)');
       });
     }
+
+    if (this.btnFlipH) this.btnFlipH.addEventListener('click', () => this.flipHorizontal());
+    if (this.btnFlipV) this.btnFlipV.addEventListener('click', () => this.flipVertical());
+    if (this.btnRotateCW) this.btnRotateCW.addEventListener('click', () => this.rotateCW());
+    if (this.btnRotateCCW) this.btnRotateCCW.addEventListener('click', () => this.rotateCCW());
+    if (this.btnRotate180) this.btnRotate180.addEventListener('click', () => this.rotate180());
 
     if (this.btnAutoDetectPort) {
       this.btnAutoDetectPort.addEventListener('click', () => this.autoDetectLaserPort());
@@ -1566,7 +1577,7 @@ class FalconApp {
       this.isAimingDotActive = !this.isAimingDotActive;
     }
 
-    const pwr = this.isAimingDotActive ? 20 : 0; // 2.0% power (S20)
+    const pwr = this.isAimingDotActive ? 40 : 0; // 4.0% power (S40) - Clearly visible bright blue beam
 
     // 1. Web Serial USB
     if (this.serialController && this.serialController.isConnected) {
@@ -2333,12 +2344,12 @@ class FalconApp {
     this.log(`Loading preset: ${presetId}...`);
 
     const presetMeta = {
-      'chittur_4cm': { file: 'presets/keychain_4cm_vector.gcode', w: 35.0, h: 35.0, wpW: 40.0, wpH: 40.0, shape: 'round', speed: 900, power: 280 },
+      'chittur_4cm': { file: 'presets/keychain_trace_svg_lines.gcode', w: 35.0, h: 35.0, wpW: 40.0, wpH: 40.0, shape: 'round', speed: 900, power: 280 },
       'chittur_10cm': { file: 'presets/keychain_10cm_vector.gcode', w: 90.0, h: 90.0, wpW: 100.0, wpH: 100.0, shape: 'round', speed: 1000, power: 320 },
       'bed_scale_200mm': { file: 'presets/black_glass_bed_scale.gcode', w: 200.0, h: 200.0, wpW: 200.0, wpH: 200.0, shape: 'rect', speed: 800, power: 450 },
       'bed_scale_380mm': { file: null, w: 380.0, h: 380.0, wpW: 380.0, wpH: 380.0, shape: 'rect', speed: 1000, power: 400 }
     };
-    const info = presetMeta[presetId] || { file: 'presets/keychain_4cm_vector.gcode', w: 35.0, h: 35.0, wpW: 40.0, wpH: 40.0, shape: 'round', speed: 900, power: 280 };
+    const info = presetMeta[presetId] || { file: 'presets/keychain_trace_svg_lines.gcode', w: 35.0, h: 35.0, wpW: 40.0, wpH: 40.0, shape: 'round', speed: 900, power: 280 };
 
     this.inputWidth.value = String(info.w);
     this.inputHeight.value = String(info.h);
@@ -2467,10 +2478,15 @@ class FalconApp {
     try {
       const payload = {
         job_type: this.currentMode,
+        center_x: parseFloat(this.inputX.value),
+        center_y: parseFloat(this.inputY.value),
         x: parseFloat(this.inputX.value) - parseFloat(this.inputWidth.value) / 2,
         y: parseFloat(this.inputY.value) - parseFloat(this.inputHeight.value) / 2,
         width: parseFloat(this.inputWidth.value),
         height: parseFloat(this.inputHeight.value),
+        rotation: this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0,
+        flip_x: !!(this.visualizer && this.visualizer.workpiece && this.visualizer.workpiece.flipX),
+        flip_y: !!(this.visualizer && this.visualizer.workpiece && this.visualizer.workpiece.flipY),
         speed: parseFloat(this.inputSpeed.value),
         power: parseInt(this.inputPower.value),
         passes: parseInt(this.inputPasses.value) || 1
@@ -2512,16 +2528,17 @@ class FalconApp {
 
       if (!this.currentActiveGcode || this.currentActiveGcode.length === 0 || !data || !data.lines || data.lines.length === 0) {
         if (this.currentMode === 'vector') {
-          const rotDeg = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : 0;
           const lines = ClientSvgCompiler.generateVectorGcode({
             norm_paths: this.currentPaths,
-            center_x: parseFloat(this.inputX.value),
-            center_y: parseFloat(this.inputY.value),
+            center_x: payload.center_x,
+            center_y: payload.center_y,
             x_pos: payload.x,
             y_pos: payload.y,
             width_mm: payload.width,
             height_mm: payload.height,
-            rotation_deg: rotDeg,
+            rotation_deg: payload.rotation,
+            flip_x: payload.flip_x,
+            flip_y: payload.flip_y,
             speed_mm_min: payload.speed,
             power_s: payload.power,
             passes: payload.passes
@@ -2769,6 +2786,15 @@ class FalconApp {
     this.visualizer.setRotation(cur);
     this.log(`Workpiece rotated to ${cur.toFixed(1)}° (-90° CCW).`);
     this.saveState(`Rotate CCW (${cur.toFixed(1)}°)`);
+  }
+
+  rotate180() {
+    let cur = this.inputRotation ? (parseFloat(this.inputRotation.value) || 0) : this.visualizer.workpiece.rotation;
+    cur = ((cur + 180) % 360 + 360) % 360;
+    if (this.inputRotation) this.inputRotation.value = cur.toFixed(1);
+    this.visualizer.setRotation(cur);
+    this.log(`Workpiece rotated by 180° to ${cur.toFixed(1)}°.`);
+    this.saveState(`Rotate 180° (${cur.toFixed(1)}°)`);
   }
 
   // ==========================================

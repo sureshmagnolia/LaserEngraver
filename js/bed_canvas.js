@@ -34,6 +34,8 @@ class BedVisualizer {
       width: 40.0,
       height: 40.0,
       rotation: 0.0, // in degrees 0-360
+      flipX: false,
+      flipY: false,
       visible: false, // ONLY visible after loading an SVG/Image/Preset
       isSelected: true, // Selected by default when visible
       isDragging: false,
@@ -126,6 +128,24 @@ class BedVisualizer {
   setRotation(deg) {
     this.workpiece.rotation = ((deg % 360) + 360) % 360;
     this.render();
+  }
+
+  rotateBy(deg) {
+    this.workpiece.rotation = (((this.workpiece.rotation + deg) % 360) + 360) % 360;
+    this.render();
+    return this.workpiece.rotation;
+  }
+
+  flipHorizontal() {
+    this.workpiece.flipX = !this.workpiece.flipX;
+    this.render();
+    return this.workpiece.flipX;
+  }
+
+  flipVertical() {
+    this.workpiece.flipY = !this.workpiece.flipY;
+    this.render();
+    return this.workpiece.flipY;
   }
 
   setVisible(visible) {
@@ -783,10 +803,12 @@ class BedVisualizer {
           if (!poly || poly.length < 2) continue;
           ctx.beginPath();
           for (let i = 0; i < poly.length; i++) {
-            // Normalized 0-1 mapped relative to workpiece center (-hw to +hw, -hh to +hh)
-            // SVG Y is inverted (0 is top)
-            const px = -hw + poly[i][0] * wpW;
-            const py = -hh + poly[i][1] * wpH;
+            let nx = poly[i][0];
+            let ny = poly[i][1];
+            if (this.workpiece.flipX) nx = 1.0 - nx;
+            if (this.workpiece.flipY) ny = 1.0 - ny;
+            const px = -hw + nx * wpW;
+            const py = -hh + ny * wpH;
             if (i === 0) ctx.moveTo(px, py);
             else ctx.lineTo(px, py);
           }
@@ -797,7 +819,12 @@ class BedVisualizer {
       // Raster preview image (if loaded)
       if (this.rasterPreviewImg) {
         try {
+          ctx.save();
+          if (this.workpiece.flipX || this.workpiece.flipY) {
+            ctx.scale(this.workpiece.flipX ? -1 : 1, this.workpiece.flipY ? -1 : 1);
+          }
           ctx.drawImage(this.rasterPreviewImg, -hw, -hh, wpW, wpH);
+          ctx.restore();
         } catch (e) {}
       }
 

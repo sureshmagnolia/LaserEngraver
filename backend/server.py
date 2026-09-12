@@ -86,7 +86,7 @@ async def api_zero(request):
 
 async def api_laser_dot(request):
     data = await request.json() if request.headers.get("content-type") == "application/json" else {}
-    power = int(data.get("power", 5))
+    power = int(data.get("power", 40))
     is_on = controller.toggle_laser_dot(power)
     return JSONResponse({"laser_dot_on": is_on})
 
@@ -176,6 +176,11 @@ async def api_generate_gcode(request):
         height_mm = float(data.get("height", 40.0))
         speed = float(data.get("speed", 900.0))
         power = int(data.get("power", 280))
+        rotation = float(data.get("rotation", 0.0))
+        flip_x = bool(data.get("flip_x", False))
+        flip_y = bool(data.get("flip_y", False))
+        center_x = float(data.get("center_x")) if data.get("center_x") is not None else None
+        center_y = float(data.get("center_y")) if data.get("center_y") is not None else None
 
         if job_type == "vector":
             paths = data.get("paths", [])
@@ -186,6 +191,11 @@ async def api_generate_gcode(request):
                 y_pos=y_pos,
                 width_mm=width_mm,
                 height_mm=height_mm,
+                center_x=center_x,
+                center_y=center_y,
+                rotation_deg=rotation,
+                flip_x=flip_x,
+                flip_y=flip_y,
                 speed_mm_min=speed,
                 power_s=power,
                 passes=passes
@@ -404,7 +414,7 @@ async def api_load_preset_gcode(request):
     preset_meta = {
         "chittur_4cm": {
             "name": "Chittur 4cm Keychain",
-            "file": "keychain_4cm_vector.gcode",
+            "file": "keychain_trace_svg_lines.gcode",
             "w": 35.0, "h": 35.0, "workpiece_w": 40.0, "workpiece_h": 40.0,
             "shape": "round", "speed": 900, "power": 280
         },

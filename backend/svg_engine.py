@@ -230,19 +230,46 @@ class SvgEngine:
         y_pos: float,
         width_mm: float,
         height_mm: float,
+        center_x: float = None,
+        center_y: float = None,
+        rotation_deg: float = 0.0,
+        flip_x: bool = False,
+        flip_y: bool = False,
         speed_mm_min: float = 900.0,
         power_s: int = 280,
         passes: int = 1
     ) -> List[str]:
         """
         Generate continuous vector G-code from normalized (0.0-1.0) polylines.
-        Includes Nearest-Neighbor TSP optimization to eliminate random jumping,
+        Matches screen canvas coordinate space 1:1 (Canvas Top -> Machine Back +Y, Canvas Bottom -> Machine Front -Y).
+        Supports rotation and horizontal/vertical flips.
+        Includes Nearest-Neighbor TSP path ordering to eliminate random jumping,
         and uses GRBL 1.1 M4 Dynamic Laser Mode without jerky M5 stops between segments.
         """
+        cx = center_x if center_x is not None else (x_pos + width_mm / 2.0)
+        cy = center_y if center_y is not None else (y_pos + height_mm / 2.0)
+        rad = (-rotation_deg * math.pi) / 180.0
+        cos_val = math.cos(rad)
+        sin_val = math.sin(rad)
+
+        def transform_point(nx: float, ny: float) -> Tuple[float, float]:
+            if flip_x:
+                nx = 1.0 - nx
+            if flip_y:
+                ny = 1.0 - ny
+            # In screen space, ny=0 is TOP and ny=1 is BOTTOM.
+            # In CNC Cartesian space, +Y is Back/Top and -Y is Front/Bottom.
+            # Thus (0.5 - ny) correctly maps screen top to machine back!
+            lx = (nx - 0.5) * width_mm
+            ly = (0.5 - ny) * height_mm
+            rx = lx * cos_val - ly * sin_val
+            ry = lx * sin_val + ly * cos_val
+            return (round(cx + rx, 3), round(cy + ry, 3))
+
         rapid_speed = max(1500.0, speed_mm_min * 1.5)
         lines = [
             "; --- FALCON VECTOR TRACE JOB ---",
-            f"; Size: {width_mm:.2f} x {height_mm:.2f} mm at ({x_pos:.2f}, {y_pos:.2f})",
+            f"; Center: ({cx:.2f}, {cy:.2f}) | Size: {width_mm:.2f} x {height_mm:.2f} mm | Rotation: {rotation_deg:.1f}°",
             f"; Feed: {speed_mm_min:.0f} mm/min | Power: S{power_s} | Passes: {passes}",
             "G90 G21",
             "$X",
@@ -256,9 +283,9 @@ class SvgEngine:
             lines.append("M5")
             return lines
 
-        # Nearest-Neighbor TSP path ordering
+        # Nearest-Neighbor TSP path ordering with transform awareness
         ordered_paths: List[List[Tuple[float, float]]] = []
-        curr_pos = (x_pos, y_pos)
+        curr_pos = (cx, cy)
         remaining = list(valid_paths)
 
         while remaining:
@@ -267,16 +294,14 @@ class SvgEngine:
             reverse_best = False
 
             for i, p in enumerate(remaining):
-                # Check normal start
-                p_start = (x_pos + p[0][0] * width_mm, y_pos + p[0][1] * height_mm)
+                p_start = transform_point(p[0][0], p[0][1])
                 d1 = (p_start[0] - curr_pos[0])**2 + (p_start[1] - curr_pos[1])**2
                 if d1 < best_dist:
                     best_dist = d1
                     best_idx = i
                     reverse_best = False
 
-                # Check reverse start (if polyline can be traversed backwards)
-                p_end = (x_pos + p[-1][0] * width_mm, y_pos + p[-1][1] * height_mm)
+                p_end = transform_point(p[-1][0], p[-1][1])
                 d2 = (p_end[0] - curr_pos[0])**2 + (p_end[1] - curr_pos[1])**2
                 if d2 < best_dist:
                     best_dist = d2
@@ -287,29 +312,26 @@ class SvgEngine:
             if reverse_best:
                 chosen = chosen[::-1]
             ordered_paths.append(chosen)
-            curr_pos = (x_pos + chosen[-1][0] * width_mm, y_pos + chosen[-1][1] * height_mm)
+            curr_pos = transform_point(chosen[-1][0], chosen[-1][1])
 
         for p_num in range(passes):
             if passes > 1:
                 lines.append(f"; --- Pass {p_num + 1}/{passes} ---")
             
             for poly in ordered_paths:
-                # Rapid travel with laser automatically disabled by GRBL G0
-                sx = x_pos + poly[0][0] * width_mm
-                sy = y_pos + poly[0][1] * height_mm
+                # Rapid travel to polyline start with laser suppressed by G0
+                sx, sy = transform_point(poly[0][0], poly[0][1])
                 lines.append(f"G0 X{sx:.3f} Y{sy:.3f}")
                 
                 # First cutting move engages power S
-                pt1_x = x_pos + poly[1][0] * width_mm
-                pt1_y = y_pos + poly[1][1] * height_mm
+                pt1_x, pt1_y = transform_point(poly[1][0], poly[1][1])
                 lines.append(f"G1 X{pt1_x:.3f} Y{pt1_y:.3f} S{power_s} F{speed_mm_min:.0f}")
                 
                 # Remaining continuous cutting moves
                 for pt in poly[2:]:
-                    tx = x_pos + pt[0] * width_mm
-                    ty = y_pos + pt[1] * height_mm
+                    tx, ty = transform_point(pt[0], pt[1])
                     lines.append(f"G1 X{tx:.3f} Y{ty:.3f}")
 
         lines.append("M5 ; Laser OFF")
-        lines.append(f"G0 X{x_pos:.3f} Y{y_pos:.3f} F{rapid_speed:.0f} ; Return to Origin")
+        lines.append(f"G0 X0 Y0 F{rapid_speed:.0f} ; Return to Origin")
         return lines
