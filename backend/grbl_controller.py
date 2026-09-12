@@ -152,7 +152,7 @@ class GrblController:
             except Exception as e:
                 print(f"[GRBL] Send immediate error: {e}")
 
-    def send_line(self, line: str, timeout: float = 3.0, ignore_abort: bool = False) -> bool:
+    def send_line(self, line: str, timeout: float = 30.0, ignore_abort: bool = False) -> bool:
         """Send a single line and wait for 'ok' or 'error'."""
         with self.lock:
             if not self.ser or not self.ser.is_open:
@@ -178,8 +178,9 @@ class GrblController:
                             print(f"[GRBL Error] Command '{clean}' returned: {res}")
                             return False
                     else:
-                        time.sleep(0.005)
-                return True  # Proceed on timeout rather than stalling whole job
+                        time.sleep(0.002)
+                print(f"[GRBL Timeout] Command '{clean}' timed out after {timeout}s")
+                return False
             except Exception as e:
                 print(f"[GRBL] Error sending line: {e}")
                 return False
@@ -353,11 +354,23 @@ class GrblController:
         threading.Thread(target=post_abort_cleanup, daemon=True).start()
 
     def _streaming_worker(self, lines: List[str]):
-        """Stream lines with flow control."""
+        """Stream lines with strict flow control."""
         try:
-            # Unlock alarm and ensure laser mode is active
-            self.send_line("$X")
-            self.send_line("$32=1")
+            with self.lock:
+                if self.ser and self.ser.is_open:
+                    try:
+                        self.ser.reset_input_buffer()
+                        self.ser.reset_output_buffer()
+                    except Exception:
+                        pass
+
+            # Unlock alarm, ensure laser mode is active, and ensure laser is off
+            self.send_line("$X", timeout=2.0)
+            time.sleep(0.05)
+            self.send_line("$32=1", timeout=2.0)
+            time.sleep(0.05)
+            self.send_line("M5", timeout=2.0)
+            time.sleep(0.05)
 
             for idx, raw_line in enumerate(lines):
                 if self.stream_abort_requested:
@@ -371,7 +384,7 @@ class GrblController:
                     self.current_line_idx = idx + 1
                     continue
                 
-                success = self.send_line(line, timeout=10.0)
+                success = self.send_line(line, timeout=30.0)
                 if not success and not self.stream_abort_requested:
                     print(f"[GRBL Stream] Line failed: {line}")
                 

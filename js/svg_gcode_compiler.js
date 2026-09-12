@@ -238,19 +238,24 @@ class ClientSvgCompiler {
     for (let pass = 1; pass <= passes; pass++) {
       if (passes > 1) lines.push(`; --- PASS ${pass}/${passes} ---`);
       for (const poly of orderedPaths) {
-        // Rapid to start point (laser automatically suppressed by G0 in GRBL laser mode)
+        // Rapid travel with laser guaranteed 100% OFF
         const [gx0, gy0] = transformPoint(poly[0][0], poly[0][1]);
+        lines.push("M5 ; Laser OFF before travel");
         lines.push(`G0 X${gx0.toFixed(3)} Y${gy0.toFixed(3)}`);
 
-        // First cut move engages power S
+        // Engage laser on cutting move
         const [gx1, gy1] = transformPoint(poly[1][0], poly[1][1]);
-        lines.push(`G1 X${gx1.toFixed(3)} Y${gy1.toFixed(3)} S${power_s} F${speed_mm_min.toFixed(0)}`);
+        lines.push(`M3 S${power_s}`);
+        lines.push(`G1 X${gx1.toFixed(3)} Y${gy1.toFixed(3)} F${speed_mm_min.toFixed(0)}`);
 
         // Remaining continuous cutting moves
         for (let j = 2; j < poly.length; j++) {
           const [gx, gy] = transformPoint(poly[j][0], poly[j][1]);
           lines.push(`G1 X${gx.toFixed(3)} Y${gy.toFixed(3)}`);
         }
+
+        // Turn off immediately after path ends
+        lines.push("M5 ; Laser OFF after path");
       }
     }
 

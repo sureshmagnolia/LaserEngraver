@@ -210,7 +210,7 @@ class SvgEngine:
             norm_poly = []
             for x, y in poly:
                 nx = (x - min_x) / span_x
-                ny = 1.0 - ((y - min_y) / span_y) # Flip SVG Y-down to standard Cartesian
+                ny = (y - min_y) / span_y # Normalized 0.0 (top) to 1.0 (bottom) matching screen canvas
                 norm_poly.append((round(nx, 5), round(ny, 5)))
             norm_paths.append(norm_poly)
 
@@ -319,18 +319,23 @@ class SvgEngine:
                 lines.append(f"; --- Pass {p_num + 1}/{passes} ---")
             
             for poly in ordered_paths:
-                # Rapid travel to polyline start with laser suppressed by G0
+                # Rapid travel with laser guaranteed 100% OFF
                 sx, sy = transform_point(poly[0][0], poly[0][1])
+                lines.append("M5 ; Laser OFF before travel")
                 lines.append(f"G0 X{sx:.3f} Y{sy:.3f}")
                 
-                # First cutting move engages power S
+                # Engage laser on cutting move
+                lines.append(f"M3 S{power_s}")
                 pt1_x, pt1_y = transform_point(poly[1][0], poly[1][1])
-                lines.append(f"G1 X{pt1_x:.3f} Y{pt1_y:.3f} S{power_s} F{speed_mm_min:.0f}")
+                lines.append(f"G1 X{pt1_x:.3f} Y{pt1_y:.3f} F{speed_mm_min:.0f}")
                 
                 # Remaining continuous cutting moves
                 for pt in poly[2:]:
                     tx, ty = transform_point(pt[0], pt[1])
                     lines.append(f"G1 X{tx:.3f} Y{ty:.3f}")
+                
+                # Turn off immediately after path ends
+                lines.append("M5 ; Laser OFF after path")
 
         lines.append("M5 ; Laser OFF")
         lines.append(f"G0 X0 Y0 F{rapid_speed:.0f} ; Return to Origin")

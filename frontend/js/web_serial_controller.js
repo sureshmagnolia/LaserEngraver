@@ -358,7 +358,7 @@ class WebSerialController {
             timer = setTimeout(() => {
               this.streamingAckResolve = null;
               resolve(); // Don't hang forever
-            }, 3500);
+            }, 30000);
           });
           await this.sendLine(line);
           await ackPromise;
