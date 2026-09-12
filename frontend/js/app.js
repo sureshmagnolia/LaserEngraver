@@ -780,7 +780,8 @@ class FalconApp {
     this.btnJogYMinus.addEventListener('click', () => this.jog(0, -this.jogStep));
     this.btnJogXPlus.addEventListener('click', () => this.jog(this.jogStep, 0));
     this.btnJogXMinus.addEventListener('click', () => this.jog(-this.jogStep, 0));
-    this.btnHome.addEventListener('click', () => this.home());
+    // Center jog button routes to Return to Origin (0,0) safely
+    this.btnHome.addEventListener('click', () => this.goToOrigin());
     this.btnSetZero.addEventListener('click', () => this.setZero());
 
     const btnGoToOrigin = document.getElementById('btnGoToOrigin');
@@ -790,6 +791,10 @@ class FalconApp {
     const btnHomeDetailed = document.getElementById('btnHomeDetailed');
     if (btnHomeDetailed) {
       btnHomeDetailed.addEventListener('click', () => this.home());
+    }
+    const btnUnlockMachine = document.getElementById('btnUnlockMachine');
+    if (btnUnlockMachine) {
+      btnUnlockMachine.addEventListener('click', () => this.unlockMachine());
     }
 
     // Optical Aiming
@@ -1301,8 +1306,32 @@ class FalconApp {
       await this.serialController.home();
       return;
     }
-    this.log('Executing physical homing ($H)...');
-    await fetch('/api/home', { method: 'POST' });
+    this.log('Executing homing cycle ($H / Return to Origin)...');
+    try {
+      const res = await fetch('/api/home', { method: 'POST' });
+      const data = await res.json();
+      if (data && data.success) {
+        this.visualizer.setLaserPosition(0, 0);
+        this.log('✅ Laser homed / positioned at Origin (0,0).');
+      } else {
+        this.log('Homing cycle finished.');
+      }
+    } catch (e) {
+      this.log(`Homing error: ${e.message}`);
+    }
+  }
+
+  async unlockMachine() {
+    this.log('Unlocking GRBL Alarm Lockout ($X)...');
+    try {
+      const res = await fetch('/api/unlock', { method: 'POST' });
+      const data = await res.json();
+      if (data && data.success) {
+        this.log('✅ Machine unlocked ($X). Steppers and laser ready.');
+      }
+    } catch (e) {
+      this.log(`Unlock error: ${e.message}`);
+    }
   }
 
   async setZero() {
@@ -2627,6 +2656,18 @@ class FalconApp {
     this.btnPauseJob.disabled = true;
     this.btnStopJob.disabled = true;
     this.log('🛑 Emergency Stop sent: Motion halted & laser diode killed.');
+    
+    // Auto-unlock machine after brief delay so user can immediately jog or use aiming dot
+    setTimeout(async () => {
+      try {
+        await fetch('/api/unlock', { method: 'POST' });
+        this.log('✅ Machine alarm unlocked ($X). Ready for next action.');
+      } catch (e) {}
+    }, 450);
+  }
+
+  emergencyStop() {
+    this.stopJob();
   }
 
   scaleWorkpiece(factor) {

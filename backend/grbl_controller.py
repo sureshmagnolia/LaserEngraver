@@ -152,10 +152,12 @@ class GrblController:
             except Exception as e:
                 print(f"[GRBL] Send immediate error: {e}")
 
-    def send_line(self, line: str, timeout: float = 3.0) -> bool:
+    def send_line(self, line: str, timeout: float = 3.0, ignore_abort: bool = False) -> bool:
         """Send a single line and wait for 'ok' or 'error'."""
         with self.lock:
-            if not self.ser or not self.ser.is_open or self.stream_abort_requested:
+            if not self.ser or not self.ser.is_open:
+                return False
+            if self.stream_abort_requested and not ignore_abort:
                 return False
             clean = line.strip()
             if not clean:
@@ -164,7 +166,7 @@ class GrblController:
                 self.ser.write((clean + "\r\n").encode("utf-8"))
                 start = time.time()
                 while time.time() - start < timeout:
-                    if self.stream_abort_requested:
+                    if self.stream_abort_requested and not ignore_abort:
                         return False
                     if self.ser.in_waiting > 0:
                         res = self.ser.readline().decode("utf-8", errors="ignore").strip()
@@ -182,35 +184,76 @@ class GrblController:
                 print(f"[GRBL] Error sending line: {e}")
                 return False
 
+    def unlock(self) -> bool:
+        """Send $X to clear any GRBL Alarm lockout."""
+        self.stream_abort_requested = False
+        if not self.is_connected:
+            return False
+        print("[GRBL] Sending $X to unlock alarm state...")
+        return self.send_line("$X", timeout=1.5, ignore_abort=True)
+
     def jog(self, dx: float = 0.0, dy: float = 0.0, feed: float = 1200.0) -> bool:
         """Send GRBL 1.1 jogging command."""
         if not self.is_connected or self.is_streaming:
             return False
+        self.stream_abort_requested = False
         jog_cmd = f"$J=G91 G21 X{dx:.3f} Y{dy:.3f} F{feed:.0f}"
-        return self.send_line(jog_cmd)
+        return self.send_line(jog_cmd, ignore_abort=True)
 
     def home(self) -> bool:
-        """Run physical homing cycle ($H)."""
+        """Run homing cycle ($H). If machine has no limit switches, gracefully return to (0,0)."""
         if not self.is_connected or self.is_streaming:
             return False
-        return self.send_line("$H", timeout=30.0)
+        self.stream_abort_requested = False
+        # Clear alarm lock first
+        self.send_line("$X", timeout=1.0, ignore_abort=True)
+        # Attempt $H
+        res = self.send_line("$H", timeout=20.0, ignore_abort=True)
+        if not res:
+            # If $H failed (e.g. error:5 homing not enabled / no endstops), unlock and rapid to (0,0)
+            self.send_line("$X", timeout=1.0, ignore_abort=True)
+            return self.send_line("G90 G21 G0 X0 Y0 F1500", timeout=5.0, ignore_abort=True)
+        return True
+
+    def go_to_origin(self) -> bool:
+        """Rapid move laser head to Active Origin (0,0)."""
+        if not self.is_connected or self.is_streaming:
+            return False
+        self.stream_abort_requested = False
+        self.send_line("$X", timeout=1.0, ignore_abort=True)
+        self.send_line("G90 G21", timeout=1.5, ignore_abort=True)
+        return self.send_line("G0 X0 Y0 F1500", timeout=5.0, ignore_abort=True)
 
     def set_zero(self) -> bool:
         """Zero current coordinates (G92 X0 Y0)."""
         if not self.is_connected:
             return False
-        return self.send_line("G92 X0 Y0")
+        self.stream_abort_requested = False
+        self.send_line("$X", timeout=1.0, ignore_abort=True)
+        return self.send_line("G92 X0 Y0", ignore_abort=True)
 
     def toggle_laser_dot(self, power_s: int = 20) -> bool:
-        """Toggle a 2% low-power aiming laser dot."""
+        """
+        Toggle low-power aiming laser dot.
+        In GRBL 1.1 laser mode ($32=1), stationary M3 S... suppresses the beam until motion occurs.
+        We send a tiny 0.02mm motion back-and-forth so GRBL energizes the laser diode safely.
+        """
         if not self.is_connected:
             return False
+        self.stream_abort_requested = False
+        self.send_line("$X", timeout=1.0, ignore_abort=True)
         if self.is_laser_dot_on:
-            self.send_line("M5")
+            self.send_line("M5", timeout=1.0, ignore_abort=True)
             self.is_laser_dot_on = False
             return False
         else:
-            self.send_line(f"M3 S{power_s}")
+            # Ensure laser mode is active
+            self.send_line("$32=1", timeout=1.0, ignore_abort=True)
+            self.send_line("G91 G21", timeout=1.0, ignore_abort=True)
+            self.send_line(f"M3 S{power_s}", timeout=1.0, ignore_abort=True)
+            self.send_line("G1 X0.02 Y0 F100", timeout=1.0, ignore_abort=True)
+            self.send_line("G1 X-0.02 Y0 F100", timeout=1.0, ignore_abort=True)
+            self.send_line("G90", timeout=1.0, ignore_abort=True)
             self.is_laser_dot_on = True
             return True
 
@@ -218,6 +261,8 @@ class GrblController:
         """Trace the rectangular frame with safe low-power aiming beam."""
         if not self.is_connected or self.is_streaming:
             return False
+        self.stream_abort_requested = False
+        self.send_line("$X", timeout=1.0, ignore_abort=True)
         
         commands = [
             "G90 G21",
@@ -231,8 +276,8 @@ class GrblController:
             f"G0 X{x_min:.3f} Y{y_min:.3f}"
         ]
         for cmd in commands:
-            if not self.send_line(cmd):
-                self.send_line("M5")
+            if not self.send_line(cmd, ignore_abort=True):
+                self.send_line("M5", ignore_abort=True)
                 return False
         return True
 
@@ -264,7 +309,7 @@ class GrblController:
         if self.is_streaming and not self.is_paused:
             self.is_paused = True
             self.send_immediate(b"!")
-            self.send_line("M5")
+            self.send_line("M5", ignore_abort=True)
 
     def resume_stream(self):
         """Resume running job."""
@@ -273,12 +318,13 @@ class GrblController:
             self.send_immediate(b"~")
 
     def stop_stream(self):
-        """Instant emergency abort."""
+        """Instant emergency abort with automatic alarm unlock."""
         self.stream_abort_requested = True
         self.is_streaming = False
         self.is_paused = False
+        # Feedhold then soft reset
         self.send_immediate(b"!\x18")
-        time.sleep(0.05)
+        time.sleep(0.08)
         self.send_immediate(b"M5\r\n")
         try:
             if self.ser and self.ser.is_open:
@@ -286,6 +332,23 @@ class GrblController:
                 self.ser.flushOutput()
         except Exception:
             pass
+        
+        # In a short delayed callback, unlock the GRBL alarm lock and restore laser mode
+        def post_abort_cleanup():
+            time.sleep(0.3)
+            with self.lock:
+                if self.ser and self.ser.is_open:
+                    try:
+                        self.ser.write(b"$X\r\n")
+                        time.sleep(0.05)
+                        self.ser.write(b"$32=1\r\n")
+                        time.sleep(0.05)
+                        self.ser.write(b"M5\r\n")
+                    except Exception:
+                        pass
+                self.stream_abort_requested = False
+                self.machine_state = "IDLE"
+        threading.Thread(target=post_abort_cleanup, daemon=True).start()
 
     def _streaming_worker(self, lines: List[str]):
         """Stream lines with flow control."""

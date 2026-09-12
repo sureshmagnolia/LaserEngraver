@@ -236,42 +236,80 @@ class SvgEngine:
     ) -> List[str]:
         """
         Generate continuous vector G-code from normalized (0.0-1.0) polylines.
+        Includes Nearest-Neighbor TSP optimization to eliminate random jumping,
+        and uses GRBL 1.1 M4 Dynamic Laser Mode without jerky M5 stops between segments.
         """
+        rapid_speed = max(1500.0, speed_mm_min * 1.5)
         lines = [
             "; --- FALCON VECTOR TRACE JOB ---",
             f"; Size: {width_mm:.2f} x {height_mm:.2f} mm at ({x_pos:.2f}, {y_pos:.2f})",
             f"; Feed: {speed_mm_min:.0f} mm/min | Power: S{power_s} | Passes: {passes}",
             "G90 G21",
-            "M5",
-            f"G0 F{speed_mm_min * 1.5:.0f}"
+            "$X",
+            "$32=1",
+            "M4 S0",
+            f"G0 F{rapid_speed:.0f}"
         ]
+
+        valid_paths = [p for p in norm_paths if len(p) >= 2]
+        if not valid_paths:
+            lines.append("M5")
+            return lines
+
+        # Nearest-Neighbor TSP path ordering
+        ordered_paths: List[List[Tuple[float, float]]] = []
+        curr_pos = (x_pos, y_pos)
+        remaining = list(valid_paths)
+
+        while remaining:
+            best_idx = 0
+            best_dist = float("inf")
+            reverse_best = False
+
+            for i, p in enumerate(remaining):
+                # Check normal start
+                p_start = (x_pos + p[0][0] * width_mm, y_pos + p[0][1] * height_mm)
+                d1 = (p_start[0] - curr_pos[0])**2 + (p_start[1] - curr_pos[1])**2
+                if d1 < best_dist:
+                    best_dist = d1
+                    best_idx = i
+                    reverse_best = False
+
+                # Check reverse start (if polyline can be traversed backwards)
+                p_end = (x_pos + p[-1][0] * width_mm, y_pos + p[-1][1] * height_mm)
+                d2 = (p_end[0] - curr_pos[0])**2 + (p_end[1] - curr_pos[1])**2
+                if d2 < best_dist:
+                    best_dist = d2
+                    best_idx = i
+                    reverse_best = True
+
+            chosen = remaining.pop(best_idx)
+            if reverse_best:
+                chosen = chosen[::-1]
+            ordered_paths.append(chosen)
+            curr_pos = (x_pos + chosen[-1][0] * width_mm, y_pos + chosen[-1][1] * height_mm)
 
         for p_num in range(passes):
             if passes > 1:
-                lines.append(f"; Pass {p_num + 1}/{passes}")
+                lines.append(f"; --- Pass {p_num + 1}/{passes} ---")
             
-            for poly in norm_paths:
-                if len(poly) < 2:
-                    continue
-                # Start point: Invert Y so SVG top (y=0) maps to CNC top (+Y)
+            for poly in ordered_paths:
+                # Rapid travel with laser automatically disabled by GRBL G0
                 sx = x_pos + poly[0][0] * width_mm
-                sy = y_pos + (1.0 - poly[0][1]) * height_mm
-                
-                # Rapid to start with laser OFF
+                sy = y_pos + poly[0][1] * height_mm
                 lines.append(f"G0 X{sx:.3f} Y{sy:.3f}")
                 
-                # Laser ON for cutting
-                lines.append(f"M3 S{power_s}")
+                # First cutting move engages power S
+                pt1_x = x_pos + poly[1][0] * width_mm
+                pt1_y = y_pos + poly[1][1] * height_mm
+                lines.append(f"G1 X{pt1_x:.3f} Y{pt1_y:.3f} S{power_s} F{speed_mm_min:.0f}")
                 
-                # Trace path with laser ON
-                for pt in poly[1:]:
+                # Remaining continuous cutting moves
+                for pt in poly[2:]:
                     tx = x_pos + pt[0] * width_mm
-                    ty = y_pos + (1.0 - pt[1]) * height_mm
-                    lines.append(f"G1 X{tx:.3f} Y{ty:.3f} F{speed_mm_min:.0f}")
-                
-                # Laser OFF between segments
-                lines.append("M5")
+                    ty = y_pos + pt[1] * height_mm
+                    lines.append(f"G1 X{tx:.3f} Y{ty:.3f}")
 
-        lines.append("M5")
-        lines.append(f"G0 X{x_pos:.3f} Y{y_pos:.3f} F{speed_mm_min * 1.5:.0f}")
+        lines.append("M5 ; Laser OFF")
+        lines.append(f"G0 X{x_pos:.3f} Y{y_pos:.3f} F{rapid_speed:.0f} ; Return to Origin")
         return lines

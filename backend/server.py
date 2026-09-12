@@ -566,8 +566,13 @@ async def api_generate_bed_scale(request):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
+async def api_unlock(request):
+    """Unlock any active GRBL alarm lockout ($X)."""
+    success = controller.unlock()
+    return JSONResponse({"success": success, "status": controller.get_status_dict()})
+
 async def api_go_to_origin(request):
-    """Move laser head directly to physical (0,0) Origin and flash low-power aiming dot."""
+    """Move laser head directly to physical (0,0) Origin."""
     if not controller.is_connected:
         controller.wpos = [0.0, 0.0, 0.0]
         controller.mpos = [0.0, 0.0, 0.0]
@@ -576,16 +581,8 @@ async def api_go_to_origin(request):
     if controller.is_streaming:
         return JSONResponse({"success": False, "error": "Machine is actively streaming a job"}, status_code=400)
     
-    # Rapid to 0,0 and pulse aiming beam
-    controller.send_line("G90 G21")
-    controller.send_line("G0 X0 Y0 F1500")
-    controller.send_line("M3 S20")
-    # Turn off after 4 seconds in background thread
-    def turn_off():
-        time.sleep(4.0)
-        controller.send_line("M5")
-    threading.Thread(target=turn_off, daemon=True).start()
-    return JSONResponse({"success": True, "message": "Laser moved to Origin (0,0) with aiming dot active for 4s"})
+    success = controller.go_to_origin()
+    return JSONResponse({"success": success, "message": "Laser moved to Origin (0,0)"})
 
 routes = [
     Route("/", endpoint=index),
@@ -593,6 +590,7 @@ routes = [
     Route("/api/connect", endpoint=api_connect, methods=["POST"]),
     Route("/api/disconnect", endpoint=api_disconnect, methods=["POST"]),
     Route("/api/status", endpoint=api_status, methods=["GET"]),
+    Route("/api/unlock", endpoint=api_unlock, methods=["POST"]),
     Route("/api/jog", endpoint=api_jog, methods=["POST"]),
     Route("/api/home", endpoint=api_home, methods=["POST"]),
     Route("/api/zero", endpoint=api_zero, methods=["POST"]),

@@ -174,33 +174,84 @@ class ClientSvgCompiler {
       return [cx + rx, cy + ry];
     };
 
+    const validPaths = (norm_paths || []).filter(p => p && p.length >= 2);
+    const rapidSpeed = Math.max(1500, Math.round(speed_mm_min * 1.5));
+
     const lines = [
       "; --- FALCON LASER STUDIO VECTOR TRACE TOOLPATH ---",
       `; Center: (${cx.toFixed(1)}, ${cy.toFixed(1)}) | Size: ${width_mm} x ${height_mm} mm | Rotation: ${rotation_deg.toFixed(1)}°`,
       `; Speed: ${speed_mm_min} mm/min | Power: S${power_s} | Passes: ${passes}`,
       "G90 G21",
+      "$X",
+      "$32=1",
       "M4 S0",
-      `G0 F${(speed_mm_min * 1.5).toFixed(0)}`
+      `G0 F${rapidSpeed}`
     ];
+
+    if (validPaths.length === 0) {
+      lines.push("M5");
+      return lines;
+    }
+
+    // Nearest-Neighbor TSP path ordering to eliminate random jumping
+    const orderedPaths = [];
+    let currPos = [cx, cy];
+    const remaining = [...validPaths];
+
+    while (remaining.length > 0) {
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      let reverseBest = false;
+
+      for (let i = 0; i < remaining.length; i++) {
+        const p = remaining[i];
+        const pStart = transformPoint(p[0][0], p[0][1]);
+        const d1 = Math.pow(pStart[0] - currPos[0], 2) + Math.pow(pStart[1] - currPos[1], 2);
+        if (d1 < bestDist) {
+          bestDist = d1;
+          bestIdx = i;
+          reverseBest = false;
+        }
+
+        const pEnd = transformPoint(p[p.length - 1][0], p[p.length - 1][1]);
+        const d2 = Math.pow(pEnd[0] - currPos[0], 2) + Math.pow(pEnd[1] - currPos[1], 2);
+        if (d2 < bestDist) {
+          bestDist = d2;
+          bestIdx = i;
+          reverseBest = true;
+        }
+      }
+
+      let chosen = remaining.splice(bestIdx, 1)[0];
+      if (reverseBest) {
+        chosen = [...chosen].reverse();
+      }
+      orderedPaths.push(chosen);
+      const lastPt = transformPoint(chosen[chosen.length - 1][0], chosen[chosen.length - 1][1]);
+      currPos = lastPt;
+    }
 
     for (let pass = 1; pass <= passes; pass++) {
       if (passes > 1) lines.push(`; --- PASS ${pass}/${passes} ---`);
-      for (const poly of norm_paths) {
-        if (!poly || poly.length < 2) continue;
+      for (const poly of orderedPaths) {
+        // Rapid to start point (laser automatically suppressed by G0 in GRBL laser mode)
         const [gx0, gy0] = transformPoint(poly[0][0], poly[0][1]);
-
         lines.push(`G0 X${gx0.toFixed(3)} Y${gy0.toFixed(3)}`);
-        lines.push(`M3 S${power_s}`);
-        for (let j = 1; j < poly.length; j++) {
+
+        // First cut move engages power S
+        const [gx1, gy1] = transformPoint(poly[1][0], poly[1][1]);
+        lines.push(`G1 X${gx1.toFixed(3)} Y${gy1.toFixed(3)} S${power_s} F${speed_mm_min.toFixed(0)}`);
+
+        // Remaining continuous cutting moves
+        for (let j = 2; j < poly.length; j++) {
           const [gx, gy] = transformPoint(poly[j][0], poly[j][1]);
-          lines.push(`G1 X${gx.toFixed(3)} Y${gy.toFixed(3)} F${speed_mm_min.toFixed(0)}`);
+          lines.push(`G1 X${gx.toFixed(3)} Y${gy.toFixed(3)}`);
         }
-        lines.push("M5");
       }
     }
 
-    lines.push("M5");
-    lines.push("G0 X0 Y0 F1500");
+    lines.push("M5 ; Laser OFF");
+    lines.push(`G0 X0 Y0 F${rapidSpeed} ; Return to Origin`);
     return lines;
   }
 }
